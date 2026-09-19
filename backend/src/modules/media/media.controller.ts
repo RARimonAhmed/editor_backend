@@ -76,6 +76,20 @@ export class MediaController {
     return reply.status(200).send(createSuccessResponse(result));
   }
 
+  // GET /v1/media/:id/processing-job
+  async getProcessingJob(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const userId = request.user!.userId;
+    const result = await mediaService.getProcessingJob(request.params.id, userId);
+    return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  // POST /v1/media/:id/cancel-processing
+  async cancelProcessing(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const userId = request.user!.userId;
+    const result = await mediaService.cancelProcessing(request.params.id, userId);
+    return reply.status(200).send(createSuccessResponse(result));
+  }
+
   // GET /v1/media
   async list(request: FastifyRequest, reply: FastifyReply) {
     const parseResult = listMediaQuerySchema.safeParse(request.query);

@@ -102,24 +102,35 @@ TechXayan Creative's media subsystem provides an enterprise-grade object storage
 
 #### Lifecycle State Machine
 ```
-[Client Presign] ──► UPLOADING ──► [Client Complete] ──► PROCESSING (Security Scan) ──► READY
+[Client Presign] ──► UPLOADING ──► [Client Complete] ──► PROCESSING (Queue Worker Job) ──► READY
                            │                                          │
                            ▼                                          ▼
-                         CANCELLED / FAILED                        FAILED
+                         CANCELLED / FAILED                        FAILED (DLQ)
                                       │
                                       ▼
                                    DELETED (Soft-delete & S3 purge)
 ```
+
+#### Media Processing Pipeline (Worker Jobs)
+```
+Upload Complete ──► Probe (15%) ──► Metadata (30%) ──► Thumbnail & Strip (50%) ──► Waveform (70%) ──► Proxy (85%) ──► Search Index (95%) ──► READY (100%)
+```
+
+- **Extracted Telemetry**: `duration`, `resolution` (width, height, aspect ratio), `fps`, `codec`, `audioCodec`, `channels`, `sampleRate`, `rotation`, `bitrateKbps`, `colorInformation` (colorSpace, colorPrimaries, colorTransfer, bitDepth).
+- **Generated Artifacts**: Cover thumbnail, 5+ frame timestamped thumbnail strip for scrubbing, 128-peak audio waveform array, 720p H.264 timeline edit proxy.
+- **Queue Features**: Exponential backoff retries (3 attempts), Dead-Letter Queue (DLQ), and job cancellation.
 
 #### Media Endpoints
 - `POST /v1/media/presign` - Request single-part or multipart upload session.
   - Automatically activates multipart chunking (5MB minimum part size) for files $\ge$ 50MB or when `uploadType: 'multipart'`.
   - Request body: `{ fileName, mimeType, fileSizeBytes, category?, projectId?, checksumSha256?, uploadType?, partCount? }`
   - Returns: `{ assetId, uploadId, uploadType, partSize, parts: [{ partNumber, uploadUrl }], uploadUrl }`
-- `POST /v1/media/complete` - Finalize upload, verify checksum, execute security scan hook, and transition asset to `READY`.
-  - Request body: `{ assetId, uploadId?, parts?: [{ partNumber, eTag }], checksumSha256? }`
+- `POST /v1/media/complete` - Finalize upload, verify checksum, execute security scan hook, and enqueue asynchronous processing worker job.
+  - Returns immediately with `{ id, status: 'PROCESSING', processingJobId: '...' }` without blocking API requests.
+  - Request body: `{ mediaId, uploadId?, parts?: [{ partNumber, eTag }], checksumSha256?, width?, height?, durationSeconds? }`
+- `GET /v1/media/:id/processing-job` - Query real-time processing progress (0-100%), current pipeline stage, telemetry, and artifacts.
+- `POST /v1/media/:id/cancel-processing` - Cancel ongoing processing job and mark asset as `FAILED`.
 - `POST /v1/media/upload` - Direct API upload for small creative assets (LUTs, fonts, stickers, audio up to 50MB).
-  - Request body: `{ fileName, mimeType, fileSizeBytes, dataBase64, category?, projectId?, checksumSha256? }`
 - `GET /v1/media/:id` - Fetch asset metadata and fresh presigned download URL (valid for 1 hour).
 - `DELETE /v1/media/:id` - Soft-delete asset metadata and remove underlying binary object from storage bucket.
 - `POST /v1/media/:id/cancel` - Cancel active upload and abort S3 multipart session.
@@ -135,8 +146,10 @@ TechXayan Creative's media subsystem provides an enterprise-grade object storage
 
 ### 7. Video Rendering & Processing Jobs (`/api/v1/jobs`)
 - `POST /render` - Submit video timeline rendering export job (Cost: 10 credits)
-- `GET /:id` - Poll job rendering progress (`0%` to `100%`) and download URL
-- `POST /:id/cancel` - Cancel active rendering job
+- `GET /dead-letter` - List failed jobs currently in the Dead-Letter Queue (DLQ)
+- `GET /:id` - Poll job rendering or processing progress (`0%` to `100%`) and status
+- `POST /:id/cancel` - Cancel active background job
+- `POST /:id/retry` - Retry a failed or dead-lettered job
 
 ### 8. Credits & Billing (`/api/v1/credits`)
 - `GET /balance` - Retrieve current credit balance
@@ -152,12 +165,17 @@ TechXayan Creative's media subsystem provides an enterprise-grade object storage
 
 ---
 
-## Real-Time Collaboration WebSocket
+## Real-Time WebSockets
 
+### 1. Collaboration WebSocket
 - **Endpoint**: `ws://localhost:4000/ws/v1/collaboration/:projectId?token=<access_token>`
-- **Supported Actions**:
-  - `JOIN_PROJECT`, `LEAVE_PROJECT`
-  - `CURSOR_MOVE` (live editor pointer broadcast)
-  - `SEEK_PLAYHEAD` (timeline scrub sync)
-  - `TIMELINE_MUTATION` (multiplayer track and clip edit broadcast)
-  - `LOCK_TRACK` / `UNLOCK_TRACK` (concurrency protection)
+- **Supported Actions**: `JOIN_PROJECT`, `LEAVE_PROJECT`, `CURSOR_MOVE`, `SEEK_PLAYHEAD`, `TIMELINE_MUTATION`, `LOCK_TRACK`, `UNLOCK_TRACK`, `MEDIA_PROCESSING_PROGRESS`, `MEDIA_PROCESSING_COMPLETED`.
+
+### 2. Media Processing Real-Time Progress WebSocket
+- **Job Subscription**: `ws://localhost:4000/ws/v1/jobs/:jobId/progress?token=<access_token>`
+- **Media Subscription**: `ws://localhost:4000/ws/v1/media/:mediaId/progress?token=<access_token>`
+- **Events Emitted**:
+  - `SUBSCRIBED`: `{ event: "SUBSCRIBED", jobId: "..." }`
+  - `JOB_PROGRESS`: `{ event: "JOB_PROGRESS", jobId, mediaId, status: "processing", step: "waveform", progress: 70, details: { ... } }`
+  - `JOB_COMPLETED`: `{ event: "JOB_COMPLETED", status: "completed", progress: 100, result: { telemetry, thumbnails, waveform, proxy } }`
+  - `JOB_FAILED`: `{ event: "JOB_FAILED", status: "failed", error: "...", isDeadLetter: true }`

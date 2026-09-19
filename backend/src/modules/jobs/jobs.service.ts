@@ -84,6 +84,20 @@ export class JobsService {
     const job = await this.getJob(id, userId);
     job.status = 'cancelled';
     job.updatedAt = new Date().toISOString();
+    await jobQueue.cancelJob(id);
+    return job;
+  }
+
+  async getDeadLetterJobs(): Promise<any[]> {
+    return jobQueue.getDeadLetterJobs();
+  }
+
+  async retryJob(id: string, userId: string): Promise<MediaJob> {
+    const job = await this.getJob(id, userId);
+    job.status = 'queued';
+    job.updatedAt = new Date().toISOString();
+    job.errorMessage = undefined;
+    await jobQueue.retryJob(id);
     return job;
   }
 }

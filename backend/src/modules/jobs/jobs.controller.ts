@@ -36,6 +36,17 @@ export class JobsController {
     const job = await jobsService.cancelJob(request.params.id, userId);
     return reply.status(200).send(createSuccessResponse(job));
   }
+
+  async getDeadLetterJobs(_request: FastifyRequest, reply: FastifyReply) {
+    const jobs = await jobsService.getDeadLetterJobs();
+    return reply.status(200).send(createSuccessResponse(jobs, { total: jobs.length }));
+  }
+
+  async retryJob(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const userId = request.user!.userId;
+    const job = await jobsService.retryJob(request.params.id, userId);
+    return reply.status(200).send(createSuccessResponse(job));
+  }
 }
 
 export const jobsController = new JobsController();

@@ -3,6 +3,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { storageService, PresignedUrlResult, MultipartPartInfo } from '../../services/storage/index.js';
 import { db } from '../../database/client.js';
+import { jobQueue } from '../../services/queue/index.js';
+import { MediaProcessingJobPayload } from './media-processor.service.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../core/errors.js';
 import {
   MediaCategory,
@@ -33,6 +35,8 @@ export interface MediaAsset {
   width?: number;
   height?: number;
   framerate?: number;
+  audioChannels?: number;
+  audioSampleRate?: number;
   checksumSha256?: string;
   uploadId?: string;
   uploadType: 'direct' | 'multipart';
@@ -44,12 +48,19 @@ export interface MediaAsset {
   };
   retentionDays: number;
   downloadUrl?: string;
+  thumbnailUrl?: string;
+  thumbnailStrip?: Array<any>;
+  waveform?: any;
+  proxy?: any;
+  searchMetadata?: any;
+  metadata?: any;
+  processingJobId?: string;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-const mockMediaAssets = new Map<string, MediaAsset>();
+export const mockMediaAssets = new Map<string, MediaAsset>();
 
 export class MediaService {
   // ============================================================================
@@ -310,8 +321,8 @@ export class MediaService {
       throw new ValidationError(`Security scan rejected upload: ${scan.reason}`);
     }
 
-    // 4. Transition to READY
-    asset.status = 'READY';
+    // 4. Set status to PROCESSING & Enqueue Asynchronous Media Processing Pipeline Job
+    asset.status = 'PROCESSING';
     asset.scanResult = { status: 'passed', scannedAt: now };
     if (providedChecksum) asset.checksumSha256 = providedChecksum;
     if (input.durationSeconds) asset.durationSeconds = input.durationSeconds;
@@ -319,13 +330,37 @@ export class MediaService {
     if (input.height) asset.height = input.height;
 
     asset.downloadUrl = await storageService.getDownloadPresignedUrl(asset.fileKey);
+
+    // Queue worker job: Probe -> Metadata -> Thumbnail -> Waveform -> Proxy -> Search Index -> READY
+    const job = await jobQueue.add<MediaProcessingJobPayload>(
+      'media_processing',
+      {
+        jobId: uuidv4(),
+        mediaId: asset.id,
+        userId,
+        projectId: asset.projectId,
+        fileKey: asset.fileKey,
+        mimeType: asset.mimeType,
+        category: asset.category,
+        fileName: asset.name,
+        fileSizeBytes: asset.fileSizeBytes,
+        initialOverrides: {
+          durationSeconds: input.durationSeconds,
+          width: input.width,
+          height: input.height,
+        },
+      },
+      { maxAttempts: 3, backoffMs: 50 }
+    );
+
+    asset.processingJobId = job.id;
     mockMediaAssets.set(asset.id, asset);
 
     try {
       if (await db.isHealthy()) {
         await db.query(
           `UPDATE media_assets
-           SET status = 'ready', duration_seconds = $1, width = $2, height = $3, updated_at = CURRENT_TIMESTAMP
+           SET status = 'processing', duration_seconds = $1, width = $2, height = $3, updated_at = CURRENT_TIMESTAMP
            WHERE id = $4 AND user_id = $5;`,
           [asset.durationSeconds || null, asset.width || null, asset.height || null, asset.id, userId]
         );
@@ -335,6 +370,78 @@ export class MediaService {
     }
 
     return asset;
+  }
+
+  // ============================================================================
+  // GET MEDIA PROCESSING JOB STATUS & TELEMETRY
+  // ============================================================================
+  async getProcessingJob(id: string, userId: string): Promise<Record<string, any>> {
+    const asset = await this.getById(id, userId);
+    let jobData: any = null;
+
+    if (asset.processingJobId) {
+      jobData = await jobQueue.getJob(asset.processingJobId);
+    }
+
+    return {
+      mediaId: asset.id,
+      name: asset.name,
+      status: asset.status,
+      processingJobId: asset.processingJobId,
+      job: jobData
+        ? {
+            id: jobData.id,
+            status: jobData.status,
+            progress: jobData.progress,
+            currentStep: jobData.currentStep,
+            attempts: jobData.attempts,
+            maxAttempts: jobData.maxAttempts,
+            isDeadLetter: jobData.isDeadLetter,
+            error: jobData.error,
+            startedAt: jobData.startedAt,
+            completedAt: jobData.completedAt,
+          }
+        : null,
+      telemetry: asset.metadata,
+      thumbnails: asset.thumbnailStrip,
+      coverThumbnailUrl: asset.thumbnailUrl,
+      waveform: asset.waveform,
+      proxy: asset.proxy,
+      searchMetadata: asset.searchMetadata,
+    };
+  }
+
+  // ============================================================================
+  // CANCEL ASYNCHRONOUS PROCESSING
+  // ============================================================================
+  async cancelProcessing(id: string, userId: string): Promise<Record<string, any>> {
+    const asset = await this.getById(id, userId);
+    let cancelledJob = false;
+
+    if (asset.processingJobId) {
+      cancelledJob = await jobQueue.cancelJob(asset.processingJobId);
+    }
+
+    asset.status = 'FAILED';
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(asset.id, asset);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE media_assets SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = $1;`,
+          [asset.id]
+        );
+      }
+    } catch {
+      // fallback
+    }
+
+    return {
+      mediaId: asset.id,
+      status: asset.status,
+      jobCancelled: cancelledJob,
+    };
   }
 
   // ============================================================================

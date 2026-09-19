@@ -18,6 +18,18 @@ export async function jobsRoutes(fastify: FastifyInstance) {
   );
 
   fastify.get(
+    '/dead-letter',
+    {
+      schema: {
+        description: 'Get list of dead-letter jobs that have failed max attempts',
+        tags: ['Render & Processing Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    jobsController.getDeadLetterJobs.bind(jobsController)
+  );
+
+  fastify.get(
     '/:id',
     {
       schema: {
@@ -39,5 +51,17 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       },
     },
     jobsController.cancelJob.bind(jobsController)
+  );
+
+  fastify.post(
+    '/:id/retry',
+    {
+      schema: {
+        description: 'Retry a failed or dead-letter background job',
+        tags: ['Render & Processing Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    jobsController.retryJob.bind(jobsController)
   );
 }

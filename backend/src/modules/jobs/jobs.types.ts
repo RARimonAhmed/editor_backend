@@ -4,7 +4,8 @@ export type JobType =
   | 'ai_transcribe'
   | 'ai_caption'
   | 'ai_broll'
-  | 'smart_cut';
+  | 'smart_cut'
+  | 'media_processing';
 
 export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 

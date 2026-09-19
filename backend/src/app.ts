@@ -29,8 +29,12 @@ import { aiRoutes } from './modules/ai/ai.routes.js';
 import { jobsRoutes } from './modules/jobs/jobs.routes.js';
 import { webhooksRoutes } from './modules/webhooks/webhooks.routes.js';
 import { collaborationWsRoutes } from './modules/collaboration/collaboration.ws.js';
+import { mediaProgressWsRoutes } from './modules/media/media-progress.ws.js';
+import { registerQueueProcessors } from './services/queue/processors.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
+  // Ensure background queue processors are registered
+  registerQueueProcessors();
   const app = Fastify({
     logger: false, // We use custom Pino integration with request IDs
     genReqId: (req) => {
@@ -223,8 +227,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   );
 
-  // Register WebSocket Collaboration Routes
+  // Register WebSocket Collaboration & Media Progress Routes
   await app.register(collaborationWsRoutes);
+  await app.register(mediaProgressWsRoutes);
 
   // Register API v1 Routes
   const registerV1Modules = async (v1: FastifyInstance) => {

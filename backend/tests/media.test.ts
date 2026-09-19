@@ -151,12 +151,21 @@ describe('Production Media Storage & Object Lifecycle Module', () => {
     const body = JSON.parse(res.body);
     expect(body.success).toBe(true);
     expect(body.data.id).toBe(multipartMediaId);
-    expect(body.data.status).toBe('READY');
+    expect(['PROCESSING', 'READY']).toContain(body.data.status);
     expect(body.data.width).toBe(3840);
     expect(body.data.height).toBe(2160);
     expect(body.data.durationSeconds).toBe(125.4);
     expect(body.data.scanResult.status).toBe('passed');
     expect(body.data.downloadUrl).toBeDefined();
+
+    // Verify background worker completes pipeline and transitions to READY
+    await new Promise((r) => setTimeout(r, 60));
+    const checkRes = await app.inject({
+      method: 'GET',
+      url: `/v1/media/${multipartMediaId}`,
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    expect(JSON.parse(checkRes.body).data.status).toBe('READY');
   });
 
   // 5. SECURITY SCAN HOOK DETECTION OF MALICIOUS SCRIPTS
@@ -318,7 +327,7 @@ describe('Production Media Storage & Object Lifecycle Module', () => {
       },
     });
     expect(confirmRes.statusCode).toBe(201);
-    expect(JSON.parse(confirmRes.body).data.status).toBe('READY');
+    expect(['PROCESSING', 'READY']).toContain(JSON.parse(confirmRes.body).data.status);
   });
 });
 

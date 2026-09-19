@@ -124,6 +124,46 @@ export async function mediaRoutes(fastify: FastifyInstance) {
     mediaController.retry.bind(mediaController)
   );
 
+  // 8. Get Asynchronous Media Processing Job Status & Telemetry
+  fastify.get(
+    '/:id/processing-job',
+    {
+      schema: {
+        description: 'Retrieve real-time processing job progress, current stage, telemetry, and artifacts',
+        tags: ['Media Assets'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    mediaController.getProcessingJob.bind(mediaController)
+  );
+
+  // 9. Cancel Asynchronous Media Processing
+  fastify.post(
+    '/:id/cancel-processing',
+    {
+      schema: {
+        description: 'Cancel an ongoing media processing pipeline job',
+        tags: ['Media Assets'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    mediaController.cancelProcessing.bind(mediaController)
+  );
+
   // 8. List Media Assets
   fastify.get(
     '/',
