@@ -251,6 +251,43 @@ TechXayan Creative's speech-to-text pipeline extracts audio from imported video/
 - `POST /v1/ai/smart-cut` - Detect voiceover silences for jump cuts (Cost: 2 credits)
 - `POST /v1/ai/broll` - Generate synthetic B-roll visual footage (Cost: 15 credits)
 
+#### AI-Assisted Editing Analysis & Editor Commands (`/v1/ai/editing-analysis`)
+
+TechXayan Creative's AI-assisted editing engine analyzes talking-head footage, podcasts, interviews, and raw footage for dead air silences, filler words, awkward pauses, speech cadence/WPM, visual scene boundaries, and viral highlight moments.
+
+> **CRITICAL ARCHITECTURAL INVARIANT**: AI **never directly mutates project data**. AI operates purely as an analytical advisor returning validated `EditorCommand` objects (`DELETE_RANGE`, `REMOVE_FILLER`, `SHORTEN_PAUSE`, `SCENE_SPLIT`, `CREATE_HIGHLIGHT_CLIP`, `ADD_MARKER`). The commands are previewed and toggled by the creator in `my_editor`'s UI, and then applied explicitly by the frontend's `ProjectBloc` with optimistic concurrency control (`expectedVersion`), ripple editing, and version snapshotting.
+
+- **Pipeline Flow**: `AI Analysis ──► Normalized Commands ──► Backend Validation ──► Frontend Preview ──► ProjectBloc ──► Timeline Mutation`
+- `POST /v1/ai/editing-analysis` - Execute multi-feature editing analysis (Cost: 3 credits).
+  - Request body:
+    ```json
+    {
+      "projectId": "optional-project-uuid",
+      "mediaAssetId": "optional-media-uuid",
+      "mediaUrl": "optional-url",
+      "transcriptionId": "optional-transcription-uuid",
+      "audioBase64": "optional-base64",
+      "options": {
+        "detectSilences": true,
+        "minSilenceDuration": 0.6,
+        "detectFillerWords": true,
+        "fillerWordsList": ["um", "uh", "like", "you know", "er", "ah", "hmm"],
+        "detectPauses": true,
+        "minPauseDuration": 1.2,
+        "detectScenes": true,
+        "detectHighlights": true
+      }
+    }
+    ```
+  - Response: returns `AIEditingAnalysisResult` containing `features` (silences, fillerWords, pauses, speechSegments, sceneBoundaries, highlightCandidates), `summary`, `commands` (normalized editor operations), and `previewMetrics` (time saved, projected duration).
+- `POST /v1/ai/editing-analysis/validate` - Validate custom or user-modified editor commands and preview timeline diff without modifying project data.
+  - Request body: `{ projectId?, duration?, commands: EditorCommand[] }`
+  - Response: `{ isValid: boolean, errors: string[], normalizedCommands: EditorCommand[], previewMetrics: TimelinePreviewDiff }`
+- `POST /v1/ai/editing-analysis/apply` - Explicit user-initiated application of approved commands via `ProjectBloc`.
+  - Request body: `{ projectId, expectedVersion, commands?: EditorCommand[], commandIds?: string[], rippleEditing?: boolean }`
+  - Response: returns updated `ProjectDocument` with incremented version, updated timeline duration, and broadcasted `TIMELINE_MUTATION`.
+- `GET /v1/ai/editing-analysis/:id` - Fetch previously computed editing analysis document.
+
 #### Asynchronous AI Job System (`/v1/ai/jobs` & `/api/v1/ai/jobs`)
 - `POST /v1/ai/jobs` - Enqueue an asynchronous AI job with idempotency and deduplication (HTTP 202 Accepted).
   - Header: `Idempotency-Key: <string>` (optional, prevents duplicate queueing and double billing)

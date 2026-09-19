@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { aiController } from './ai.controller.js';
 import { aiJobController } from './jobs/ai-job.controller.js';
 import { transcriptionController } from './transcription/transcription.controller.js';
+import { editingAnalysisController } from './editing-analysis/editing-analysis.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
 
 export async function aiRoutes(fastify: FastifyInstance) {
@@ -297,5 +298,56 @@ export async function aiRoutes(fastify: FastifyInstance) {
       },
     },
     aiJobController.getJobEvents.bind(aiJobController)
+  );
+
+  // --------------------------------------------------------------------------
+  // AI-ASSISTED EDITING ANALYSIS & EDITOR COMMANDS
+  // --------------------------------------------------------------------------
+  fastify.post(
+    '/editing-analysis',
+    {
+      schema: {
+        description: 'Analyze media or project for silences, fillers, pauses, scene cuts, and highlights',
+        tags: ['AI Editing Assistant'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editingAnalysisController.runAnalysis.bind(editingAnalysisController)
+  );
+
+  fastify.post(
+    '/editing-analysis/validate',
+    {
+      schema: {
+        description: 'Validate custom or user-modified editor commands and preview timeline diff',
+        tags: ['AI Editing Assistant'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editingAnalysisController.validateCommands.bind(editingAnalysisController)
+  );
+
+  fastify.post(
+    '/editing-analysis/apply',
+    {
+      schema: {
+        description: 'Apply approved editor commands to project timeline with optimistic concurrency',
+        tags: ['AI Editing Assistant'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editingAnalysisController.applyCommands.bind(editingAnalysisController)
+  );
+
+  fastify.get(
+    '/editing-analysis/:id',
+    {
+      schema: {
+        description: 'Retrieve previously computed editing analysis document',
+        tags: ['AI Editing Assistant'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editingAnalysisController.getAnalysis.bind(editingAnalysisController)
   );
 }
