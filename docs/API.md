@@ -138,6 +138,89 @@ Upload Complete ──► Probe (15%) ──► Metadata (30%) ──► Thumbna
 - `GET /v1/media` - List & search user media assets (`projectId`, `category`, `status`, `search`, `limit`, `offset`).
 - `POST /v1/media/upload-url` & `POST /v1/media/confirm` - Backward-compatible legacy endpoints.
 
+#### Media Intelligence & Multi-Modal Semantic Search (`/v1/media/search/semantic`, `/v1/media/:id/intelligence`)
+
+TechXayan Creative's media intelligence engine analyzes imported media assets across multiple modalities (visual objects, anonymous faces, speech transcript & diarized speakers, scene cut boundaries, EXIF GPS locations, audio acoustic events, and vector embeddings) to power natural language semantic search with frame-accurate timeline range recommendations.
+
+##### Semantic Search Pipeline
+```
+Natural Query ("person speaking beside a car")
+         │
+         ▼
+[Embedding & Semantic Intent Parser] ──► [Multi-Modal Vector & Hybrid Index]
+                                                      │
+                                                      ▼
+                       Ranked Results: Source Assets + Exact Timeline Ranges
+                       [{ assetId, score, matchingRanges: [{ start: 12.0, end: 18.5 }] }]
+```
+
+##### Privacy & Ethical Safeguards
+- **Strict Anonymity**: Face detection extracts purely geometric bounding boxes (`[ymin, xmin, ymax, xmax]`), presence intervals, and face counts. Personal attribute inferences (race, gender, emotion, age, biometric templates) are strictly forbidden and omitted.
+- **Explicit-Only Geo Locations**: Geographical GPS coordinates are indexed *only if* explicitly embedded in source metadata / EXIF tags. Coordinates are never hallucinated or predicted.
+- **Multi-Tenant Isolation**: Users only query and discover their own media assets.
+
+##### Endpoints
+- `POST /v1/media/search/semantic` - Natural language multi-modal semantic search.
+  - Request body:
+    ```json
+    {
+      "query": "Find clips where a person is speaking beside a car",
+      "mode": "hybrid",
+      "objects": ["car", "person"],
+      "speechText": "welcome",
+      "minDuration": 5.0,
+      "maxDuration": 120.0,
+      "mediaTypes": ["video"],
+      "projectId": "optional-project-uuid",
+      "fromDate": "2026-01-01T00:00:00.000Z",
+      "toDate": "2026-12-31T23:59:59.999Z",
+      "minScore": 0.3,
+      "limit": 20,
+      "offset": 0
+    }
+    ```
+  - Response (HTTP 200):
+    ```json
+    {
+      "success": true,
+      "data": {
+        "results": [
+          {
+            "assetId": "media-uuid",
+            "assetName": "car_interview.mp4",
+            "mediaType": "video",
+            "duration": 45.2,
+            "score": 0.88,
+            "matchingRanges": [
+              {
+                "start": 10.0,
+                "end": 20.0,
+                "score": 0.91,
+                "snippet": "person speaking beside a car",
+                "matchedObjects": ["person", "car"],
+                "matchedSpeech": "Let's examine the electric engine"
+              }
+            ],
+            "visualObjects": ["person", "car", "microphone"],
+            "sceneSummary": "Exterior automotive showcase interview",
+            "hasSpeech": true,
+            "hasFaces": true,
+            "location": { "latitude": 37.7749, "longitude": -122.4194 }
+          }
+        ],
+        "total": 1,
+        "query": "Find clips where a person is speaking beside a car",
+        "mode": "hybrid"
+      }
+    }
+    ```
+- `POST /v1/media/:id/intelligence` - Force-generate or re-analyze intelligence metadata and index into active search provider.
+  - Request body: `{ forceReindex?: boolean, options?: { detectObjects?: boolean, detectFaces?: boolean, detectScenes?: boolean, transcribeSpeech?: boolean, detectAudioEvents?: boolean, computeEmbeddings?: boolean } }`
+  - Response: returns generated `MediaIntelligenceMetadata` record.
+- `GET /v1/media/:id/intelligence` - Fetch full multi-modal intelligence document for an asset.
+  - Response: `{ success: true, data: { assetId, visualObjects: [...], faces: [...], speech: { transcript, words, speakers }, scenes: [...], location, audioEvents: [...], segmentEmbeddings: [...] } }`
+
+
 ### 6. Provider-Agnostic AI Gateway (`/v1/ai` & `/api/v1/ai`)
 
 TechXayan Creative's AI subsystem operates as an enterprise AI Gateway proxying inference between client applications and backend AI model providers.

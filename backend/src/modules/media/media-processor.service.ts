@@ -4,6 +4,7 @@ import { storageService } from '../../services/storage/index.js';
 import { jobQueue, Job } from '../../services/queue/index.js';
 import { mediaProgressHub } from './media-progress.ws.js';
 import { mockMediaAssets, MediaAsset } from './media.service.js';
+import { mediaIntelligenceService } from './intelligence/media-intelligence.service.js';
 import { logger } from '../../core/logger.js';
 
 export interface MediaProcessingJobPayload {
@@ -156,6 +157,11 @@ export class MediaProcessorService {
     // --------------------------------------------------------------------------
     await this.reportProgress(jobId, mediaId, 95, 'search_index', 'Building search index and catalog taxonomy...', projectId);
     const searchIndex = await this.buildSearchIndex(fileName, category, telemetry);
+    try {
+      await mediaIntelligenceService.generateAndIndex(mediaId, userId);
+    } catch (err) {
+      logger.warn({ err, mediaId }, 'Media intelligence indexing completed or skipped');
+    }
     logger.info({ jobId, mediaId, keywordCount: searchIndex.keywords.length }, 'Step 6 complete: Search index ready');
 
     // --------------------------------------------------------------------------

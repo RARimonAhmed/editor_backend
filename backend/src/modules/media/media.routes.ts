@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { mediaController } from './media.controller.js';
+import { mediaIntelligenceController } from './intelligence/media-intelligence.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
 
 export async function mediaRoutes(fastify: FastifyInstance) {
@@ -42,6 +43,19 @@ export async function mediaRoutes(fastify: FastifyInstance) {
       },
     },
     mediaController.directUpload.bind(mediaController)
+  );
+
+  // 3b. Multi-Modal Semantic Search (Placed before /:id to avoid param route collision)
+  fastify.post(
+    '/search/semantic',
+    {
+      schema: {
+        description: 'Multi-modal semantic search querying visual objects, speech, scenes, and vector embeddings with timeline ranges',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    mediaIntelligenceController.search.bind(mediaIntelligenceController)
   );
 
   // 4. Get Media by ID
@@ -162,6 +176,46 @@ export async function mediaRoutes(fastify: FastifyInstance) {
       },
     },
     mediaController.cancelProcessing.bind(mediaController)
+  );
+
+  // 10. Generate / Refresh Media Intelligence
+  fastify.post(
+    '/:id/intelligence',
+    {
+      schema: {
+        description: 'Extract multi-modal searchable intelligence (visual objects, anonymous faces, speech, scenes, audio events, embeddings)',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    mediaIntelligenceController.generateIntelligence.bind(mediaIntelligenceController)
+  );
+
+  // 11. Retrieve Media Intelligence Document
+  fastify.get(
+    '/:id/intelligence',
+    {
+      schema: {
+        description: 'Retrieve multi-modal intelligence document for a media asset',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    mediaIntelligenceController.getIntelligence.bind(mediaIntelligenceController)
   );
 
   // 8. List Media Assets
