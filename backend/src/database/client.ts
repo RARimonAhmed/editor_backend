@@ -22,6 +22,7 @@ class MemoryDatabaseClient implements IDatabaseClient {
     project_collaborators: [],
     media_assets: [],
     jobs: [],
+    ai_jobs: [],
     _schema_migrations: [],
   };
 

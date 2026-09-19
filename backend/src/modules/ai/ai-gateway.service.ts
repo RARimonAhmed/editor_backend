@@ -132,7 +132,7 @@ export class AIGatewayService {
   // --------------------------------------------------------------------------
   // CORE DISPATCHER WITH TIMEOUT, RETRY, FALLBACK & USAGE
   // --------------------------------------------------------------------------
-  private async executeWithResilience<Req extends { timeoutMs?: number; provider?: string; fallbackProvider?: string; model?: string }, Res>(
+  private async executeWithResilience<Req extends { timeoutMs?: number; provider?: string; fallbackProvider?: string; model?: string; skipCreditDeduction?: boolean }, Res>(
     userId: string,
     capability: AICapability,
     req: Req,
@@ -148,8 +148,8 @@ export class AIGatewayService {
     const primaryProviderId = this.validateProviderIdentifier(req.provider);
     const fallbackProviderId = req.fallbackProvider ? this.validateProviderIdentifier(req.fallbackProvider) : undefined;
 
-    // 3. Deduct Credits Atomically
-    if (creditCost > 0) {
+    // 3. Deduct Credits Atomically (unless pre-deducted by async job system)
+    if (creditCost > 0 && !req.skipCreditDeduction) {
       await creditsService.deductCredits(userId, creditCost, creditDescription);
     }
 
@@ -214,7 +214,7 @@ export class AIGatewayService {
       }
 
       // If all providers failed, refund user credits
-      if (creditCost > 0) {
+      if (creditCost > 0 && !req.skipCreditDeduction) {
         await creditsService.grantCredits(
           userId,
           creditCost,

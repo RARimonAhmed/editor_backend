@@ -51,7 +51,13 @@ export function registerQueueProcessors() {
     await jobsService.updateJobProgress(jobId, 100, 'completed');
   });
 
-  logger.info('Registered all background job queue processors (media_processing, render_export, ai_transcribe)');
+  // 4. Asynchronous AI Job System (Text, Speech, Image, Video, Vision, Audio)
+  jobQueue.process('ai_job', async (job: Job) => {
+    const { aiJobWorker } = await import('../../modules/ai/jobs/ai-job.worker.js');
+    return aiJobWorker.processJob(job);
+  });
+
+  logger.info('Registered all background job queue processors (media_processing, render_export, ai_transcribe, ai_job)');
 }
 
 function delay(ms: number): Promise<void> {

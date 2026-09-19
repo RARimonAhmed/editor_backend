@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { aiController } from './ai.controller.js';
+import { aiJobController } from './jobs/ai-job.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
 
 export async function aiRoutes(fastify: FastifyInstance) {
@@ -184,5 +185,80 @@ export async function aiRoutes(fastify: FastifyInstance) {
       },
     },
     aiController.generateBroll.bind(aiController)
+  );
+
+  // --------------------------------------------------------------------------
+  // ASYNCHRONOUS AI JOB SYSTEM (REDIS QUEUE + WORKER + TELEMETRY + NOTIFICATION)
+  // --------------------------------------------------------------------------
+  fastify.post(
+    '/jobs',
+    {
+      schema: {
+        description: 'Submit an asynchronous AI job with idempotency and deduplication',
+        tags: ['AI Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiJobController.createJob.bind(aiJobController)
+  );
+
+  fastify.get(
+    '/jobs',
+    {
+      schema: {
+        description: 'List user asynchronous AI jobs with status/type filtering and pagination',
+        tags: ['AI Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiJobController.listJobs.bind(aiJobController)
+  );
+
+  fastify.get(
+    '/jobs/:id',
+    {
+      schema: {
+        description: 'Get status, progress, input, output, usage, and cost of an AI job',
+        tags: ['AI Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiJobController.getJob.bind(aiJobController)
+  );
+
+  fastify.post(
+    '/jobs/:id/cancel',
+    {
+      schema: {
+        description: 'Cancel an active or queued AI job and refund reserved credits',
+        tags: ['AI Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiJobController.cancelJob.bind(aiJobController)
+  );
+
+  fastify.post(
+    '/jobs/:id/retry',
+    {
+      schema: {
+        description: 'Retry a failed or cancelled AI job',
+        tags: ['AI Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiJobController.retryJob.bind(aiJobController)
+  );
+
+  fastify.get(
+    '/jobs/:id/events',
+    {
+      schema: {
+        description: 'Server-Sent Events (SSE) stream for real-time AI job progress and completion',
+        tags: ['AI Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiJobController.getJobEvents.bind(aiJobController)
   );
 }

@@ -178,6 +178,37 @@ AIRequest ──► AI Gateway ──► Rate Limiting ──► Credits Check �
 - `POST /v1/ai/smart-cut` - Detect voiceover silences for jump cuts (Cost: 2 credits)
 - `POST /v1/ai/broll` - Generate synthetic B-roll visual footage (Cost: 15 credits)
 
+#### Asynchronous AI Job System (`/v1/ai/jobs` & `/api/v1/ai/jobs`)
+- `POST /v1/ai/jobs` - Enqueue an asynchronous AI job with idempotency and deduplication (HTTP 202 Accepted).
+  - Header: `Idempotency-Key: <string>` (optional, prevents duplicate queueing and double billing)
+  - Request: `{ type, input, projectId?, provider?, model?, idempotencyKey?, timeoutMs? }`
+  - Response: `{ job: AIJobRecord, isReplay: boolean }`
+- `GET /v1/ai/jobs/:id` - Fetch job status, progress, input, output, usage, and cost (strictly sanitized; zero secrets leaked).
+- `POST /v1/ai/jobs/:id/cancel` - Cancel active/queued job, abort ongoing inference, and refund reserved credits.
+- `POST /v1/ai/jobs/:id/retry` - Re-enqueue a failed or cancelled AI job.
+- `GET /v1/ai/jobs` - List user AI jobs with filtering (`status`, `type`, `projectId`) and pagination (`limit`, `offset`).
+- `GET /v1/ai/jobs/:id/events` - Server-Sent Events (SSE) stream for real-time progress updates.
+
+##### AI Job Field Schema
+| Field | Type | Description |
+|---|---|---|
+| `id` | `UUID` | Unique AI Job identifier |
+| `userId` | `UUID` | Owner user ID |
+| `projectId` | `UUID?` | Associated video project ID (if attached) |
+| `type` | `string` | Job modality (`text_generation`, `speech_to_text`, `image_generation`, `video_generation`, `structured_json`, `vision`, `audio_analysis`, etc.) |
+| `status` | `enum` | Uppercase state machine: `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED` |
+| `progress` | `integer` | Current progress percentage (`0` to `100`) |
+| `input` | `object` | Input parameters and prompts |
+| `output` | `object?` | Normalized output payload upon completion |
+| `provider` | `string` | Selected provider identifier (`fake`, `gemini`, `openai`, etc.) |
+| `model` | `string?` | Model version executed |
+| `usage` | `object?` | Normalized tokens, audio seconds, and image metrics |
+| `cost` | `integer` | Credits deducted for execution |
+| `error` | `string?` | Error description if status is `FAILED` |
+| `createdAt` | `string` | ISO timestamp of enqueueing |
+| `startedAt` | `string?` | ISO timestamp of worker processing initiation |
+| `completedAt` | `string?` | ISO timestamp of job completion or failure |
+
 ### 7. Video Rendering & Processing Jobs (`/api/v1/jobs`)
 - `POST /render` - Submit video timeline rendering export job (Cost: 10 credits)
 - `GET /dead-letter` - List failed jobs currently in the Dead-Letter Queue (DLQ)
@@ -199,17 +230,27 @@ AIRequest ──► AI Gateway ──► Rate Limiting ──► Credits Check �
 
 ---
 
-## Real-Time WebSockets
+## Real-Time WebSockets & Streams
 
 ### 1. Collaboration WebSocket
 - **Endpoint**: `ws://localhost:4000/ws/v1/collaboration/:projectId?token=<access_token>`
-- **Supported Actions**: `JOIN_PROJECT`, `LEAVE_PROJECT`, `CURSOR_MOVE`, `SEEK_PLAYHEAD`, `TIMELINE_MUTATION`, `LOCK_TRACK`, `UNLOCK_TRACK`, `MEDIA_PROCESSING_PROGRESS`, `MEDIA_PROCESSING_COMPLETED`.
+- **Supported Actions**: `JOIN_PROJECT`, `LEAVE_PROJECT`, `CURSOR_MOVE`, `SEEK_PLAYHEAD`, `TIMELINE_MUTATION`, `LOCK_TRACK`, `UNLOCK_TRACK`, `MEDIA_PROCESSING_PROGRESS`, `MEDIA_PROCESSING_COMPLETED`, `AI_JOB_UPDATE`.
 
 ### 2. Media Processing Real-Time Progress WebSocket
 - **Job Subscription**: `ws://localhost:4000/ws/v1/jobs/:jobId/progress?token=<access_token>`
 - **Media Subscription**: `ws://localhost:4000/ws/v1/media/:mediaId/progress?token=<access_token>`
+- **Events Emitted**: `SUBSCRIBED`, `JOB_PROGRESS`, `JOB_COMPLETED`, `JOB_FAILED`.
+
+### 3. Asynchronous AI Jobs Real-Time Progress WebSocket
+- **Single Job Subscription**: `ws://localhost:4000/ws/v1/ai/jobs/:id/progress?token=<access_token>`
+- **User Feed Subscription**: `ws://localhost:4000/ws/v1/ai/progress?token=<access_token>`
+- **Server-Sent Events (SSE)**: `GET /v1/ai/jobs/:id/events` (with `Authorization: Bearer <token>`)
 - **Events Emitted**:
   - `SUBSCRIBED`: `{ event: "SUBSCRIBED", jobId: "..." }`
-  - `JOB_PROGRESS`: `{ event: "JOB_PROGRESS", jobId, mediaId, status: "processing", step: "waveform", progress: 70, details: { ... } }`
-  - `JOB_COMPLETED`: `{ event: "JOB_COMPLETED", status: "completed", progress: 100, result: { telemetry, thumbnails, waveform, proxy } }`
-  - `JOB_FAILED`: `{ event: "JOB_FAILED", status: "failed", error: "...", isDeadLetter: true }`
+  - `JOB_QUEUED`: `{ event: "JOB_QUEUED", jobId, type, status: "QUEUED", progress: 0, cost }`
+  - `JOB_STARTED`: `{ event: "JOB_STARTED", jobId, status: "RUNNING", progress: 15 }`
+  - `JOB_PROGRESS`: `{ event: "JOB_PROGRESS", jobId, status: "RUNNING", progress: 45, currentStep: "..." }`
+  - `JOB_COMPLETED`: `{ event: "JOB_COMPLETED", jobId, status: "COMPLETED", progress: 100, output: { ... }, usage: { ... }, cost }`
+  - `JOB_FAILED`: `{ event: "JOB_FAILED", jobId, status: "FAILED", error: "..." }`
+  - `JOB_CANCELLED`: `{ event: "JOB_CANCELLED", jobId, status: "CANCELLED" }`
+

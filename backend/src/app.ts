@@ -30,6 +30,7 @@ import { jobsRoutes } from './modules/jobs/jobs.routes.js';
 import { webhooksRoutes } from './modules/webhooks/webhooks.routes.js';
 import { collaborationWsRoutes } from './modules/collaboration/collaboration.ws.js';
 import { mediaProgressWsRoutes } from './modules/media/media-progress.ws.js';
+import { aiJobWsRoutes } from './modules/ai/jobs/ai-job.ws.js';
 import { registerQueueProcessors } from './services/queue/processors.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -227,9 +228,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   );
 
-  // Register WebSocket Collaboration & Media Progress Routes
+  // Register WebSocket Collaboration, Media Progress & AI Job Routes
   await app.register(collaborationWsRoutes);
   await app.register(mediaProgressWsRoutes);
+  await app.register(aiJobWsRoutes);
 
   // Register API v1 Routes
   const registerV1Modules = async (v1: FastifyInstance) => {
