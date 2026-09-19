@@ -622,6 +622,102 @@ export class MediaService {
     });
     return res.media;
   }
+
+  // ============================================================================
+  // CREATE GENERATED ASSET (AI GENERATION OUTPUT PIPELINE)
+  // ============================================================================
+  async createGeneratedAsset(input: {
+    userId: string;
+    projectId?: string;
+    name: string;
+    category: MediaCategory;
+    mimeType: string;
+    buffer: Buffer;
+    durationSeconds?: number;
+    width?: number;
+    height?: number;
+    metadata?: Record<string, any>;
+  }): Promise<MediaAsset> {
+    const assetId = uuidv4();
+    const sanitizedName = input.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileKey = `generated/${input.userId}/${assetId}/${sanitizedName}`;
+    const checksumSha256 = crypto.createHash('sha256').update(input.buffer).digest('hex');
+
+    // 1. Upload binary to object storage
+    await storageService.putObject(fileKey, input.buffer, input.mimeType, checksumSha256);
+
+    // 2. Generate download presigned URL
+    const downloadUrl = await storageService.getDownloadPresignedUrl(fileKey);
+
+    const now = new Date().toISOString();
+    const asset: MediaAsset = {
+      id: assetId,
+      userId: input.userId,
+      projectId: input.projectId,
+      name: input.name,
+      originalFilename: input.name,
+      category: input.category,
+      fileKey,
+      mimeType: input.mimeType,
+      fileSizeBytes: input.buffer.length,
+      durationSeconds: input.durationSeconds,
+      width: input.width,
+      height: input.height,
+      checksumSha256,
+      uploadType: 'direct',
+      status: 'READY',
+      retentionDays: 365,
+      downloadUrl,
+      metadata: {
+        ...(input.metadata || {}),
+        generated: true,
+        generatedAt: now,
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    mockMediaAssets.set(assetId, asset);
+
+    // Persist to Postgres if healthy
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `INSERT INTO media_assets (
+            id, user_id, project_id, name, original_filename, category, file_key,
+            mime_type, file_size_bytes, duration_seconds, width, height,
+            checksum_sha256, upload_type, status, retention_days, metadata, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19);`,
+          [
+            asset.id,
+            asset.userId,
+            asset.projectId || null,
+            asset.name,
+            asset.originalFilename,
+            asset.category,
+            asset.fileKey,
+            asset.mimeType,
+            asset.fileSizeBytes,
+            asset.durationSeconds || null,
+            asset.width || null,
+            asset.height || null,
+            asset.checksumSha256 || null,
+            asset.uploadType,
+            asset.status,
+            asset.retentionDays,
+            JSON.stringify(asset.metadata),
+            asset.createdAt,
+            asset.updatedAt,
+          ]
+        );
+      }
+    } catch (err) {
+      logger.warn({ err, assetId }, 'Failed to persist generated media asset to database, cached in-memory');
+    }
+
+    logger.info({ assetId, category: input.category, name: input.name }, 'Created generated media asset');
+    return asset;
+  }
 }
 
 export const mediaService = new MediaService();

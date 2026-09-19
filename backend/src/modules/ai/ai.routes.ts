@@ -4,6 +4,8 @@ import { aiJobController } from './jobs/ai-job.controller.js';
 import { transcriptionController } from './transcription/transcription.controller.js';
 import { editingAnalysisController } from './editing-analysis/editing-analysis.controller.js';
 import { orchestrationController } from './orchestration/orchestration.controller.js';
+import { aiGenerationController } from './generation/ai-generation.controller.js';
+import { editorCommandController } from './commands/editor-command.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
 
 
@@ -402,6 +404,120 @@ export async function aiRoutes(fastify: FastifyInstance) {
       },
     },
     orchestrationController.getPlan.bind(orchestrationController)
+  );
+
+  // --------------------------------------------------------------------------
+  // AI GENERATION BACKEND (IMAGE, VIDEO, MUSIC, SFX, VOICE, SCRIPT)
+  // --------------------------------------------------------------------------
+  fastify.post(
+    '/generate/image',
+    {
+      schema: {
+        description: 'Generate synthetic image from text prompt via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateImage.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/video',
+    {
+      schema: {
+        description: 'Generate synthetic video from text or image via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateVideo.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/music',
+    {
+      schema: {
+        description: 'Generate synthetic background music track via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateMusic.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/sfx',
+    {
+      schema: {
+        description: 'Generate synthetic sound effect audio via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateSfx.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/voice',
+    {
+      schema: {
+        description: 'Generate synthetic voiceover audio from text script via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateVoice.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/script',
+    {
+      schema: {
+        description: 'Generate structured video script and scene outline via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateScript.bind(aiGenerationController)
+  );
+
+  // --------------------------------------------------------------------------
+  // NATURAL-LANGUAGE AI EDITOR COMMANDS
+  // --------------------------------------------------------------------------
+  fastify.post(
+    '/commands/interpret',
+    {
+      schema: {
+        description: 'Interpret natural-language editing instructions into validated structured Editor Commands with execution preview',
+        tags: ['AI Editor Commands'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editorCommandController.interpretPrompt.bind(editorCommandController)
+  );
+
+  fastify.post(
+    '/commands/validate',
+    {
+      schema: {
+        description: 'Validate custom or user-modified editor commands and generate timeline diff preview',
+        tags: ['AI Editor Commands'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editorCommandController.validateCommands.bind(editorCommandController)
+  );
+
+  fastify.post(
+    '/commands/execute',
+    {
+      schema: {
+        description: 'Apply validated editor commands to project timeline with optimistic concurrency check',
+        tags: ['AI Editor Commands'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editorCommandController.executeCommands.bind(editorCommandController)
   );
 }
 

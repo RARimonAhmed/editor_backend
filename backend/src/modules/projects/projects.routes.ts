@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { projectsController } from './projects.controller.js';
+import { reviewController } from './review/review.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
 
 export async function projectsRoutes(fastify: FastifyInstance) {
@@ -227,5 +228,109 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       },
     },
     projectsController.getVersions.bind(projectsController)
+  );
+
+  // 11. Create Named Immutable Version Snapshot
+  fastify.post(
+    '/:id/versions',
+    {
+      schema: {
+        description: 'Create a named immutable version snapshot of the current project state',
+        tags: ['Project Review & Versions'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.createSnapshot.bind(reviewController)
+  );
+
+  // 12. Compare Version Snapshots Diff
+  fastify.get(
+    '/:id/versions/compare',
+    {
+      schema: {
+        description: 'Compare metadata and timeline track/clip diff between any two version snapshots',
+        tags: ['Project Review & Versions'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.compareVersions.bind(reviewController)
+  );
+
+  // 13. Get Version Snapshot by Version Number
+  fastify.get(
+    '/:id/versions/:versionNumber',
+    {
+      schema: {
+        description: 'Retrieve a specific immutable version snapshot by version number',
+        tags: ['Project Review & Versions'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.getSnapshot.bind(reviewController)
+  );
+
+  // 14. Restore Version Snapshot (Non-destructive)
+  fastify.post(
+    '/:id/versions/:versionNumber/restore',
+    {
+      schema: {
+        description: 'Restore project to state from a previous snapshot non-destructively by creating a new version',
+        tags: ['Project Review & Versions'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.restoreSnapshot.bind(reviewController)
+  );
+
+  // 15. Create Timecode / Review Comment
+  fastify.post(
+    '/:id/comments',
+    {
+      schema: {
+        description: 'Add a timeline timecode-level, asset-level, or project-level review comment',
+        tags: ['Project Review & Comments'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.createComment.bind(reviewController)
+  );
+
+  // 16. List Review Comments
+  fastify.get(
+    '/:id/comments',
+    {
+      schema: {
+        description: 'List project review comments with filters (type, status, timecode window)',
+        tags: ['Project Review & Comments'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.listComments.bind(reviewController)
+  );
+
+  // 17. Update / Resolve Review Comment
+  fastify.patch(
+    '/:id/comments/:commentId',
+    {
+      schema: {
+        description: 'Update or resolve a review comment (status: OPEN | RESOLVED)',
+        tags: ['Project Review & Comments'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.updateComment.bind(reviewController)
+  );
+
+  // 18. Delete Review Comment
+  fastify.delete(
+    '/:id/comments/:commentId',
+    {
+      schema: {
+        description: 'Delete a review comment',
+        tags: ['Project Review & Comments'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.deleteComment.bind(reviewController)
   );
 }

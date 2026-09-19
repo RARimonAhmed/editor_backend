@@ -546,16 +546,109 @@ Long-Form Video / Project
 - **Media Subscription**: `ws://localhost:4000/ws/v1/media/:mediaId/progress?token=<access_token>`
 - **Events Emitted**: `SUBSCRIBED`, `JOB_PROGRESS`, `JOB_COMPLETED`, `JOB_FAILED`.
 
-### 3. Asynchronous AI Jobs Real-Time Progress WebSocket
-- **Single Job Subscription**: `ws://localhost:4000/ws/v1/ai/jobs/:id/progress?token=<access_token>`
-- **User Feed Subscription**: `ws://localhost:4000/ws/v1/ai/progress?token=<access_token>`
-- **Server-Sent Events (SSE)**: `GET /v1/ai/jobs/:id/events` (with `Authorization: Bearer <token>`)
-- **Events Emitted**:
-  - `SUBSCRIBED`: `{ event: "SUBSCRIBED", jobId: "..." }`
-  - `JOB_QUEUED`: `{ event: "JOB_QUEUED", jobId, type, status: "QUEUED", progress: 0, cost }`
-  - `JOB_STARTED`: `{ event: "JOB_STARTED", jobId, status: "RUNNING", progress: 15 }`
-  - `JOB_PROGRESS`: `{ event: "JOB_PROGRESS", jobId, status: "RUNNING", progress: 45, currentStep: "..." }`
-  - `JOB_COMPLETED`: `{ event: "JOB_COMPLETED", jobId, status: "COMPLETED", progress: 100, output: { ... }, usage: { ... }, cost }`
-  - `JOB_FAILED`: `{ event: "JOB_FAILED", jobId, status: "FAILED", error: "..." }`
-  - `JOB_CANCELLED`: `{ event: "JOB_CANCELLED", jobId, status: "CANCELLED" }`
+### 4. Collaboration Real-Time Events
+- **WebSocket Broadcast**:
+  - `COMMENT_ADDED`: `{ event: "COMMENT_ADDED", projectId, comment }`
+  - `COMMENT_RESOLVED`: `{ event: "COMMENT_RESOLVED", projectId, commentId, resolvedBy }`
+  - `COMMENT_DELETED`: `{ event: "COMMENT_DELETED", projectId, commentId }`
+  - `VERSION_SNAPSHOT_CREATED`: `{ event: "VERSION_SNAPSHOT_CREATED", projectId, version, snapshotId, name }`
+  - `COLLABORATOR_UPDATED`: `{ event: "COLLABORATOR_UPDATED", projectId, userId, role }`
+
+---
+
+## 11. Asynchronous AI Generation Backend (`/v1/ai/generate`)
+
+All generative endpoints enqueue an asynchronous background AI job, return HTTP 202 Accepted immediately, and stream progress via WebSocket/SSE. Upon completion, generated binary assets are uploaded to Object Storage, indexed in `media_assets` & `media_metadata`, and automatically registered into the project's asset registry.
+
+- `POST /v1/ai/generate/image` - Generates images from text prompts (e.g. thumbnails, title cards, background textures).
+  - Request body: `{ prompt: string, negativePrompt?: string, style?: string, aspectRatio?: "16:9"|"9:16"|"1:1"|"4:5"|"21:9", resolution?: "1080p"|"4k", count?: number, projectId?: UUID, provider?: string, model?: string }`
+  - Response: `{ success: true, data: { jobId: UUID, status: "QUEUED", pollUrl: string, streamUrl: string, estimatedCost: number } }`
+- `POST /v1/ai/generate/video` - Generates video clips from text prompts or reference images (Text-to-Video / Image-to-Video).
+  - Request body: `{ prompt: string, inputImageUrl?: string, durationSeconds?: number, fps?: number, aspectRatio?: string, motionIntensity?: number, cameraMotion?: string, projectId?: UUID }`
+- `POST /v1/ai/generate/music` - Generates instrumental background music and mood scores.
+  - Request body: `{ prompt: string, durationSeconds?: number, genre?: string, mood?: string, tempoBpm?: number, instrumentalOnly?: boolean, projectId?: UUID }`
+- `POST /v1/ai/generate/sfx` - Generates high-fidelity sound effects and audio foley (e.g. whoosh, riser, impact).
+  - Request body: `{ prompt: string, durationSeconds?: number, category?: string, loopable?: boolean, projectId?: UUID }`
+- `POST /v1/ai/generate/voice` - Generates speech/voiceovers with emotion and pitch modulation.
+  - Request body: `{ prompt: string, voiceId?: string, speed?: number, pitch?: number, emotion?: string, language?: string, projectId?: UUID }`
+- `POST /v1/ai/generate/script` - Generates structured video scripts and chapter outlines from narrative themes.
+  - Request body: `{ prompt: string, targetDurationSeconds?: number, format?: "short"|"explainer"|"cinematic"|"tutorial", tone?: string, targetAudience?: string, language?: string, projectId?: UUID }`
+
+---
+
+## 12. Natural-Language AI Editor Command System (`/v1/ai/commands`)
+
+Translates free-form creator instructions into strict, deterministic `EditorCommand` sequences. AI never directly mutates project state; commands are validated against strict Zod schemas and executed safely through `ProjectBloc` to maintain engine integrity with zero code injection.
+
+- `POST /v1/ai/commands/interpret` - Translates a natural-language prompt into an executable command plan.
+  - Request body: `{ prompt: string, projectId?: UUID, timelineContext?: { duration: number, playhead: number, selectedClipIds: string[], tracksCount: number } }`
+  - Response: `{ success: true, data: { intent: string, confidence: number, summary: string, commands: EditorCommand[], requiresConfirmation: boolean, affectedTracks: string[] } }`
+- `POST /v1/ai/commands/validate` - Checks command parameters, bounds, track validity, and potential timeline collisions.
+  - Request body: `{ commands: EditorCommand[], projectId?: UUID, timelineDuration?: number }`
+  - Response: `{ success: true, data: { isValid: boolean, errors: ValidationError[], normalizedCommands: EditorCommand[] } }`
+- `POST /v1/ai/commands/execute` - Atomically applies validated commands to a project via `ProjectBloc` with optimistic concurrency verification.
+  - Request body: `{ projectId: UUID, commands: EditorCommand[], expectedVersion?: number, clientTimestamp?: string }`
+  - Response: `{ success: true, data: { project: ProjectDocument, previousVersion: number, newVersion: number, executedCommandsCount: number } }`
+
+### Supported Command Catalog (15 Core Categories)
+`DELETE_RANGE`, `SPLIT_CLIP`, `MOVE_CLIP`, `TRIM_CLIP`, `ADD_EFFECT`, `REMOVE_EFFECT`, `ADJUST_AUDIO`, `SET_CANVAS_ASPECT`, `ADD_TRANSITION`, `ADD_TEXT`, `REORDER_TRACKS`, `SPEED_RAMP`, `COLOR_GRADE`, `RIPPLE_DELETE`, `FREEZE_FRAME`.
+
+---
+
+## 13. Production Billing & Atomic Credit Reservation (`/v1/billing`)
+
+- `GET /v1/billing/plans` - Returns active subscription tiers (`Free`, `Pro`, `Studio`) and monthly credit allocations.
+- `GET /v1/billing/credits` - Returns current wallet telemetry: total `balance`, active `reservedCredits`, and `availableCredits`.
+- `GET /v1/billing/usage` - Paginated audit log of credit transactions, debits, reservations, and refunds.
+- `POST /v1/billing/checkout` - Initializes a Stripe/Provider checkout session for subscriptions or credit bundles.
+  - Request body: `{ planTier: "pro"|"studio", interval?: "monthly"|"yearly", successUrl?: string, cancelUrl?: string }`
+- `POST /v1/billing/webhook` - Cryptographically verified (HMAC-SHA256) idempotent webhook listener. Automatically provisions allowances and credits upon `checkout.session.completed` while discarding duplicate replay attacks.
+
+### Atomic Credit Reservation Protocol
+1. `reserveCredits(userId, estimatedCost, operation)`: Deducts `estimatedCost` inside a per-user mutex lock queue to eliminate concurrent double-spending.
+2. Background Job Runs: Performs inference or heavy rendering.
+3. `settleCredits(userId, reservationId, actualCost)`: Computes `refund = estimatedCost - actualCost` and atomically restores any unused balance.
+4. On Failure or Cancellation: `refundReservation(userId, reservationId)` immediately restores the full reserved amount.
+
+---
+
+## 14. Project Collaboration & Fine-Grained RBAC (`/v1/projects/:id/collaborators`)
+
+Enforces role-based permissions across project operations and real-time multiplayer editing sessions:
+- **`OWNER`**: Full control, manage collaborators, billing, transfer ownership, delete project.
+- **`EDITOR`**: Mutate timeline, add/modify clips, perform AI transformations, export video.
+- **`COMMENTER`**: View project, add timecode comments, reply, resolve feedback.
+- **`VIEWER`**: Read-only timeline preview, cannot mutate or leave comments.
+
+### Collaboration Endpoints
+- `GET /v1/projects/:id/collaborators` - List active team members, their roles, and invited status.
+- `POST /v1/projects/:id/collaborators` - Invite a collaborator by email or user ID with a specific role (`EDITOR`, `COMMENTER`, `VIEWER`).
+- `PATCH /v1/projects/:id/collaborators/:userId` - Change an existing member's role (Owner only).
+- `DELETE /v1/projects/:id/collaborators/:userId` - Revoke collaborator access.
+- `POST /v1/projects/:id/collaborators/leave` - Leave a collaborative project (non-owners only).
+- `POST /v1/projects/:id/share-link` - Create or update a secure, shareable public/protected review link (with optional password and expiry timestamp).
+- `GET /v1/projects/:id/share-link` - Fetch current active share link metadata.
+- `DELETE /v1/projects/:id/share-link` - Instantly revoke public share link.
+- `POST /v1/projects/shared/:token` - Access a project via share token (with optional password challenge).
+
+---
+
+## 15. Professional Review Workflow & Timecode Comments (`/v1/projects/:id`)
+
+### Version Snapshots & Non-Destructive Restore
+- `GET /v1/projects/:id/versions` - List historical immutable snapshots for a project with creator metadata and commit messages.
+- `POST /v1/projects/:id/versions` - Create a named immutable snapshot of the current project state.
+  - Request body: `{ name: string, description?: string }`
+- `GET /v1/projects/:id/versions/:versionId` - Retrieve the exact frozen project snapshot document.
+- `POST /v1/projects/:id/versions/:versionId/restore` - Non-destructively restores a previous snapshot by creating a new version with the snapshot contents, strictly preserving all intermediate versions and audit trails.
+- `POST /v1/projects/:id/versions/compare` - Returns a structured diff between any two versions (metadata, canvas, tracks, clips added/removed/modified, duration delta).
+
+### Timecode Comments & Annotation System
+- `GET /v1/projects/:id/comments` - Fetch all review comments, filterable by `status` (`open` | `resolved`) and ordered by timeline timestamp `t`.
+- `POST /v1/projects/:id/comments` - Add a timecoded review comment.
+  - Request body: `{ timestampSeconds: number, endTimestampSeconds?: number, content: string, parentCommentId?: UUID, drawingData?: object }`
+- `PATCH /v1/projects/:id/comments/:commentId/resolve` - Mark comment as resolved (records resolver ID and timestamp).
+- `PATCH /v1/projects/:id/comments/:commentId/unresolve` - Reopen an existing resolved comment.
+- `DELETE /v1/projects/:id/comments/:commentId` - Delete a comment (author or project owner).
+
 

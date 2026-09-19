@@ -7,9 +7,12 @@ export type AICapability =
   | 'text_to_speech'
   | 'image_generation'
   | 'video_generation'
+  | 'music_generation'
+  | 'sfx_generation'
   | 'embedding'
   | 'vision'
   | 'audio_analysis';
+
 
 // Token & Usage Normalization
 export interface TokenUsage {
@@ -299,6 +302,53 @@ export interface AIAudioAnalysisResponse {
 }
 
 // ----------------------------------------------------------------------------
+// 10. MUSIC GENERATION
+// ----------------------------------------------------------------------------
+export interface AIMusicRequest {
+  prompt: string;
+  genre?: string;
+  tempoBpm?: number;
+  durationSeconds?: number;
+  mood?: string;
+  model?: string;
+  provider?: string;
+  fallbackProvider?: string;
+  timeoutMs?: number;
+  skipCreditDeduction?: boolean;
+}
+
+export interface AIMusicResponse {
+  audioUrl: string;
+  audioBase64?: string;
+  durationSeconds: number;
+  genre?: string;
+  tempoBpm?: number;
+  gateway: AIGatewayMetadata;
+}
+
+// ----------------------------------------------------------------------------
+// 11. SFX GENERATION
+// ----------------------------------------------------------------------------
+export interface AISfxRequest {
+  prompt: string;
+  category?: string;
+  durationSeconds?: number;
+  model?: string;
+  provider?: string;
+  fallbackProvider?: string;
+  timeoutMs?: number;
+  skipCreditDeduction?: boolean;
+}
+
+export interface AISfxResponse {
+  audioUrl: string;
+  audioBase64?: string;
+  durationSeconds: number;
+  category?: string;
+  gateway: AIGatewayMetadata;
+}
+
+// ----------------------------------------------------------------------------
 // PROVIDER ADAPTER CONTRACT
 // ----------------------------------------------------------------------------
 export interface IAIProviderAdapter {
@@ -313,10 +363,13 @@ export interface IAIProviderAdapter {
   textToSpeech?(req: AITextToSpeechRequest): Promise<Omit<AITextToSpeechResponse, 'gateway'>>;
   generateImage?(req: AIImageRequest): Promise<Omit<AIImageResponse, 'gateway'>>;
   generateVideo?(req: AIVideoRequest): Promise<Omit<AIVideoResponse, 'gateway'>>;
+  generateMusic?(req: AIMusicRequest): Promise<Omit<AIMusicResponse, 'gateway'>>;
+  generateSFX?(req: AISfxRequest): Promise<Omit<AISfxResponse, 'gateway'>>;
   generateEmbedding?(req: AIEmbeddingRequest): Promise<Omit<AIEmbeddingResponse, 'gateway'>>;
   analyzeVision?(req: AIVisionRequest): Promise<Omit<AIVisionResponse, 'gateway'>>;
   analyzeAudio?(req: AIAudioAnalysisRequest): Promise<Omit<AIAudioAnalysisResponse, 'gateway'>>;
 }
+
 
 // ----------------------------------------------------------------------------
 // BACKWARD COMPATIBILITY LEGACY TYPES

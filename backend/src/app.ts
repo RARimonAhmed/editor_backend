@@ -24,10 +24,13 @@ import { authenticate } from './modules/auth/auth.middleware.js';
 import { projectsRoutes } from './modules/projects/projects.routes.js';
 import { mediaRoutes } from './modules/media/media.routes.js';
 import { creditsRoutes } from './modules/credits/credits.routes.js';
+import { billingRoutes } from './modules/credits/billing.routes.js';
 import { subscriptionsRoutes } from './modules/subscriptions/subscriptions.routes.js';
+
 import { aiRoutes } from './modules/ai/ai.routes.js';
 import { jobsRoutes } from './modules/jobs/jobs.routes.js';
 import { webhooksRoutes } from './modules/webhooks/webhooks.routes.js';
+import { collaborationRoutes } from './modules/collaboration/collaboration.routes.js';
 import { collaborationWsRoutes } from './modules/collaboration/collaboration.ws.js';
 import { mediaProgressWsRoutes } from './modules/media/media-progress.ws.js';
 import { aiJobWsRoutes } from './modules/ai/jobs/ai-job.ws.js';
@@ -239,7 +242,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     await v1.register(projectsRoutes, { prefix: '/projects' });
     await v1.register(mediaRoutes, { prefix: '/media' });
     await v1.register(creditsRoutes, { prefix: '/credits' });
+    await v1.register(billingRoutes, { prefix: '/billing' });
     await v1.register(subscriptionsRoutes, { prefix: '/subscriptions' });
+    await v1.register(collaborationRoutes);
     await v1.register(aiRoutes, { prefix: '/ai' });
     await v1.register(jobsRoutes, { prefix: '/jobs' });
     await v1.register(webhooksRoutes, { prefix: '/webhooks' });

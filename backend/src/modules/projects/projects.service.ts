@@ -75,7 +75,7 @@ export interface ProjectDocument {
 }
 
 // In-memory repositories for test/mock resilience
-const mockProjects = new Map<string, ProjectDocument>();
+export const mockProjects = new Map<string, ProjectDocument>();
 const mockVersionHistory = new Map<string, ProjectVersionRecord[]>();
 
 export class ProjectsService {
@@ -659,7 +659,18 @@ export class ProjectsService {
       );
     }
   }
+
+  // ============================================================================
+  // ADD ASSET TO PROJECT ASSET REGISTRY
+  // ============================================================================
+  async addAsset(projectId: string, userId: string, asset: ProjectAsset): Promise<ProjectDocument> {
+    const project = await this.getById(projectId, userId);
+    const existingAssets = project.assets || [];
+    const updatedAssets = [...existingAssets.filter((a) => a.id !== asset.id), asset];
+    return this.update(projectId, userId, { assets: updatedAssets });
+  }
 }
 
 export const projectsService = new ProjectsService();
+
 

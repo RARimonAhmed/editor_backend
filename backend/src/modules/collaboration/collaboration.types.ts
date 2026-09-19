@@ -11,6 +11,9 @@ export type CollaborationAction =
   | 'JOB_PROGRESS'
   | 'USER_JOINED'
   | 'USER_LEFT'
+  | 'COMMENT_ADDED'
+  | 'COMMENT_RESOLVED'
+  | 'VERSION_CREATED'
   | 'ERROR'
   | 'PONG';
 
@@ -27,6 +30,7 @@ export interface CollaboratorSession {
   connectionId: string;
   userId: string;
   userName: string;
+  role?: string;
   projectId: string;
   socket: WebSocket;
   cursor?: { x: number; y: number; trackIndex?: number };

@@ -19,7 +19,12 @@ import {
   AIVisionResponse,
   AIAudioAnalysisRequest,
   AIAudioAnalysisResponse,
+  AIMusicRequest,
+  AIMusicResponse,
+  AISfxRequest,
+  AISfxResponse,
 } from '../ai.types.js';
+
 import { AppError } from '../../../core/errors.js';
 
 export class FakeAIProviderAdapter implements IAIProviderAdapter {
@@ -32,6 +37,8 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
     'text_to_speech',
     'image_generation',
     'video_generation',
+    'music_generation',
+    'sfx_generation',
     'embedding',
     'vision',
     'audio_analysis',
@@ -44,10 +51,13 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
     text_to_speech: 'fake-elevenlabs-v2',
     image_generation: 'fake-dall-e-3',
     video_generation: 'fake-sora-fast',
+    music_generation: 'fake-suno-v3',
+    sfx_generation: 'fake-audiocraft-sfx',
     embedding: 'fake-embedding-ada-002',
     vision: 'fake-vision-multimodal',
     audio_analysis: 'fake-audio-smartcut',
   };
+
 
   // Test simulation controls
   public simulateFailure: 'none' | 'rate_limit' | 'timeout' | 'server_error' | 'invalid_input' = 'none';
@@ -258,4 +268,31 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
       ],
     };
   }
+
+  // 10. Music Generation
+  async generateMusic(req: AIMusicRequest): Promise<Omit<AIMusicResponse, 'gateway'>> {
+    await this.checkSimulation();
+    const duration = req.durationSeconds || 30;
+    const genre = req.genre || 'ambient';
+    return {
+      audioUrl: `https://assets.techxayan.com/generated/music/fake_${Date.now()}.mp3`,
+      audioBase64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=',
+      durationSeconds: duration,
+      genre,
+      tempoBpm: req.tempoBpm || 120,
+    };
+  }
+
+  // 11. SFX Generation
+  async generateSFX(req: AISfxRequest): Promise<Omit<AISfxResponse, 'gateway'>> {
+    await this.checkSimulation();
+    const duration = req.durationSeconds || 3;
+    return {
+      audioUrl: `https://assets.techxayan.com/generated/sfx/fake_${Date.now()}.wav`,
+      audioBase64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=',
+      durationSeconds: duration,
+      category: req.category || 'foley',
+    };
+  }
 }
+

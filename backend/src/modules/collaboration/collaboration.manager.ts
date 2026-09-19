@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { CollaboratorSession, CollaborationMessage } from './collaboration.types.js';
+import { collaborationService } from './collaboration.service.js';
 import { logger } from '../../core/logger.js';
 
 export class CollaborationManager {
@@ -8,16 +9,19 @@ export class CollaborationManager {
   // Track locks: Map of `${projectId}:${trackId}` -> userId
   private trackLocks = new Map<string, string>();
 
-  joinRoom(session: CollaboratorSession) {
+  async joinRoom(session: CollaboratorSession) {
     let room = this.rooms.get(session.projectId);
     if (!room) {
       room = new Map<string, CollaboratorSession>();
       this.rooms.set(session.projectId, room);
     }
 
+    // Resolve user's actual role on project
+    session.role = (await collaborationService.getUserRole(session.projectId, session.userId)) || 'VIEWER';
+
     room.set(session.connectionId, session);
     logger.info(
-      { userId: session.userId, projectId: session.projectId, activeUsers: room.size },
+      { userId: session.userId, projectId: session.projectId, role: session.role, activeUsers: room.size },
       'Collaborator joined project room'
     );
 
@@ -33,6 +37,7 @@ export class CollaborationManager {
           activeCollaborators: Array.from(room.values()).map((s) => ({
             userId: s.userId,
             userName: s.userName,
+            role: s.role,
             cursor: s.cursor,
             playhead: s.playhead,
           })),
@@ -72,7 +77,7 @@ export class CollaborationManager {
     }
   }
 
-  handleMessage(connectionId: string, message: CollaborationMessage) {
+  async handleMessage(connectionId: string, message: CollaborationMessage) {
     const room = this.rooms.get(message.projectId);
     if (!room) return;
 
@@ -90,12 +95,36 @@ export class CollaborationManager {
         this.broadcast(message.projectId, message, connectionId);
         break;
 
-      case 'TIMELINE_MUTATION':
+      case 'TIMELINE_MUTATION': {
+        const canEdit = await collaborationService.hasPermission(session.projectId, session.userId, 'timeline:edit');
+        if (!canEdit) {
+          session.socket.send(
+            JSON.stringify({
+              action: 'ERROR',
+              projectId: message.projectId,
+              data: { message: `Permission denied: Role "${session.role || 'VIEWER'}" cannot mutate timeline` },
+            })
+          );
+          return;
+        }
         // Broadcast timeline change to all other editors in the room
         this.broadcast(message.projectId, message, connectionId);
         break;
+      }
 
       case 'LOCK_TRACK': {
+        const canEdit = await collaborationService.hasPermission(session.projectId, session.userId, 'timeline:edit');
+        if (!canEdit) {
+          session.socket.send(
+            JSON.stringify({
+              action: 'ERROR',
+              projectId: message.projectId,
+              data: { message: `Permission denied: Role "${session.role || 'VIEWER'}" cannot lock tracks` },
+            })
+          );
+          return;
+        }
+
         const lockKey = `${message.projectId}:${message.data?.trackId}`;
         const currentOwner = this.trackLocks.get(lockKey);
         if (!currentOwner || currentOwner === session.userId) {

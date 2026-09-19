@@ -36,12 +36,23 @@ export class AIJobService {
       case 'transcription':
         return 3;
       case 'text_to_speech':
+      case 'generate_voice':
         return 2;
       case 'image_generation':
+      case 'generate_image':
         return 5;
       case 'video_generation':
+      case 'generate_video':
       case 'broll_generation':
         return 15;
+      case 'music_generation':
+      case 'generate_music':
+        return 5;
+      case 'sfx_generation':
+      case 'generate_sfx':
+        return 2;
+      case 'generate_script':
+        return 2;
       case 'embedding':
         return 1;
       case 'vision':

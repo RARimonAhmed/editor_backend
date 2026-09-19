@@ -20,6 +20,10 @@ import {
   AIVisionResponse,
   AIAudioAnalysisRequest,
   AIAudioAnalysisResponse,
+  AIMusicRequest,
+  AIMusicResponse,
+  AISfxRequest,
+  AISfxResponse,
   TranscriptionResult,
   SubtitleSegment,
   SmartCutResult,
@@ -37,6 +41,8 @@ export class MockAIProvider implements IAIProviderAdapter, IAIProvider {
     'text_to_speech',
     'image_generation',
     'video_generation',
+    'music_generation',
+    'sfx_generation',
     'embedding',
     'vision',
     'audio_analysis',
@@ -49,6 +55,8 @@ export class MockAIProvider implements IAIProviderAdapter, IAIProvider {
     text_to_speech: 'mock-tts-v1',
     image_generation: 'mock-image-v1',
     video_generation: 'mock-video-v1',
+    music_generation: 'mock-music-v1',
+    sfx_generation: 'mock-sfx-v1',
     embedding: 'mock-embed-v1',
     vision: 'mock-vision-v1',
     audio_analysis: 'mock-audio-v1',
@@ -185,6 +193,29 @@ export class MockAIProvider implements IAIProviderAdapter, IAIProvider {
       ],
       savedTimeSeconds: 1.5,
       beatsBpm: 128,
+    };
+  }
+
+  // 10. Music Generation
+  async generateMusic(req: AIMusicRequest): Promise<Omit<AIMusicResponse, 'gateway'>> {
+    const duration = req.durationSeconds || 30;
+    return {
+      audioUrl: `https://assets.techxayan.com/mock/music_${Date.now()}.mp3`,
+      audioBase64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=',
+      durationSeconds: duration,
+      genre: req.genre || 'electronic',
+      tempoBpm: req.tempoBpm || 120,
+    };
+  }
+
+  // 11. SFX Generation
+  async generateSFX(req: AISfxRequest): Promise<Omit<AISfxResponse, 'gateway'>> {
+    const duration = req.durationSeconds || 3;
+    return {
+      audioUrl: `https://assets.techxayan.com/mock/sfx_${Date.now()}.wav`,
+      audioBase64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=',
+      durationSeconds: duration,
+      category: req.category || 'whoosh',
     };
   }
 

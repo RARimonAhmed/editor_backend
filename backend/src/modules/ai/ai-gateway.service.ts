@@ -19,9 +19,14 @@ import {
   AIVisionResponse,
   AIAudioAnalysisRequest,
   AIAudioAnalysisResponse,
+  AIMusicRequest,
+  AIMusicResponse,
+  AISfxRequest,
+  AISfxResponse,
   AIGatewayMetadata,
   AIUsage,
 } from './ai.types.js';
+
 import { FakeAIProviderAdapter } from './providers/fake.provider.js';
 import { MockAIProvider } from './providers/mock.provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
@@ -468,6 +473,49 @@ export class AIGatewayService {
       })
     );
   }
+
+  // ============================================================================
+  // 10. MUSIC GENERATION
+  // ============================================================================
+  async generateMusic(userId: string, req: AIMusicRequest): Promise<AIMusicResponse> {
+    return this.executeWithResilience(
+      userId,
+      'music_generation',
+      req,
+      5,
+      'AI Music Generation',
+      async (adapter, r) => {
+        if (!adapter.generateMusic) throw new AppError(`Provider ${adapter.id} does not implement generateMusic`, 501, 'NOT_IMPLEMENTED');
+        return adapter.generateMusic(r);
+      },
+      (res, _latency) => ({
+        audioDurationSeconds: res.durationSeconds,
+        estimatedCostCredits: 5,
+      })
+    );
+  }
+
+  // ============================================================================
+  // 11. SFX GENERATION
+  // ============================================================================
+  async generateSFX(userId: string, req: AISfxRequest): Promise<AISfxResponse> {
+    return this.executeWithResilience(
+      userId,
+      'sfx_generation',
+      req,
+      2,
+      'AI Sound Effects Generation',
+      async (adapter, r) => {
+        if (!adapter.generateSFX) throw new AppError(`Provider ${adapter.id} does not implement generateSFX`, 501, 'NOT_IMPLEMENTED');
+        return adapter.generateSFX(r);
+      },
+      (res, _latency) => ({
+        audioDurationSeconds: res.durationSeconds,
+        estimatedCostCredits: 2,
+      })
+    );
+  }
 }
+
 
 export const aiGatewayService = new AIGatewayService();
