@@ -1,0 +1,35 @@
+# Production Dockerfile for my_editor Background Media Worker Service
+
+# Stage 1: Build stage
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+COPY backend/package*.json ./
+RUN npm ci
+
+COPY backend/tsconfig.json ./
+COPY backend/src ./src
+
+RUN npm run build
+RUN npm prune --production
+
+# Stage 2: Runtime image with FFmpeg for video/audio processing
+FROM node:22-alpine AS runner
+
+# Install FFmpeg and required multimedia libraries
+RUN apk add --no-cache ffmpeg
+
+WORKDIR /app
+
+USER node
+
+COPY --chown=node:node --from=builder /app/node_modules ./node_modules
+COPY --chown=node:node --from=builder /app/dist ./dist
+COPY --chown=node:node --from=builder /app/package.json ./package.json
+
+ENV NODE_ENV=production
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV FFPROBE_PATH=/usr/bin/ffprobe
+
+CMD ["node", "dist/worker.js"]

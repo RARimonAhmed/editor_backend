@@ -1,0 +1,144 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Relational Database: PostgreSQL 16
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: my_editor_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: my_editor_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../backend/src/database/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d my_editor_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # In-Memory Cache & Message Broker: Redis 7
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: my_editor_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # S3 Compatible Object Storage: MinIO
+  # ============================================================================
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    container_name: my_editor_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # Auto-create MinIO bucket on startup
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minioadmin minioadminpassword;
+      /usr/bin/mc mb --ignore-existing local/my-editor-assets;
+      /usr/bin/mc anonymous set public local/my-editor-assets;
+      exit 0;
+      "
+
+  # ============================================================================
+  # Fastify API Service
+  # ============================================================================
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: my_editor_api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://postgres:postgrespassword@postgres:5432/my_editor_db
+      REDIS_URL: redis://redis:6379
+      STORAGE_DRIVER: s3
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_BUCKET: my-editor-assets
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadminpassword
+      STORAGE_FORCE_PATH_STYLE: "true"
+      STORAGE_PUBLIC_URL_PREFIX: http://localhost:9000/my-editor-assets
+      JWT_SECRET: production-grade-secret-key-replace-in-env
+      JWT_REFRESH_SECRET: production-grade-refresh-key-replace-in-env
+      AI_DEFAULT_PROVIDER: mock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # ============================================================================
+  # Background Media & AI Worker Service
+  # ============================================================================
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: my_editor_worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgrespassword@postgres:5432/my_editor_db
+      REDIS_URL: redis://redis:6379
+      STORAGE_DRIVER: s3
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_BUCKET: my-editor-assets
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadminpassword
+      STORAGE_FORCE_PATH_STYLE: "true"
+      STORAGE_PUBLIC_URL_PREFIX: http://localhost:9000/my-editor-assets
+      WORKER_CONCURRENCY: 4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
