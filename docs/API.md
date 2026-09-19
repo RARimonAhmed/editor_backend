@@ -138,11 +138,45 @@ Upload Complete ──► Probe (15%) ──► Metadata (30%) ──► Thumbna
 - `GET /v1/media` - List & search user media assets (`projectId`, `category`, `status`, `search`, `limit`, `offset`).
 - `POST /v1/media/upload-url` & `POST /v1/media/confirm` - Backward-compatible legacy endpoints.
 
-### 6. AI Video Services (`/api/v1/ai`)
-- `POST /transcribe` - Transcribe audio with word-level timestamps (Cost: 5 credits)
-- `POST /captions` - Generate dynamic animated subtitles (Cost: 3 credits)
-- `POST /smart-cut` - Detect voiceover silences for jump cuts (Cost: 2 credits)
-- `POST /broll` - Generate synthetic B-roll visual footage (Cost: 15 credits)
+### 6. Provider-Agnostic AI Gateway (`/v1/ai` & `/api/v1/ai`)
+
+TechXayan Creative's AI subsystem operates as an enterprise AI Gateway proxying inference between client applications and backend AI model providers.
+
+> **CRITICAL SECURITY NOTE**: No provider API keys (OpenAI, Google Gemini, Anthropic, etc.) are ever distributed inside Windows or Android client application binaries. All authentication and credential storage is strictly handled server-side via environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`). Arbitrary user-supplied provider URLs are strictly disallowed to prevent SSRF attacks.
+
+#### AI Gateway Architecture
+```
+AIRequest ──► AI Gateway ──► Rate Limiting ──► Credits Check ──► Provider Adapter ──► Normalized AI Response
+                                                                          │
+                                                               (On Failure: Auto Fallback)
+```
+
+#### Gateway Endpoints
+- `GET /v1/ai/providers` - Discover available server-side providers and supported capabilities.
+- `POST /v1/ai/text` - Normalized text generation with provider/model selection (Cost: 1 credit).
+  - Request: `{ prompt, systemPrompt?, messages?, model?, provider?, fallbackProvider?, temperature?, maxTokens?, timeoutMs? }`
+- `POST /v1/ai/structured-json` - Schema-enforced structured JSON generation (Cost: 1 credit).
+  - Request: `{ prompt, schema, schemaName?, systemPrompt?, model?, provider?, fallbackProvider?, temperature? }`
+- `POST /v1/ai/speech-to-text` - Audio/video transcription with word-level timestamps (Cost: 5 credits).
+  - Request: `{ audioUrl?, audioBase64?, language?, wordTimestamps?, model?, provider?, fallbackProvider? }`
+- `POST /v1/ai/text-to-speech` - Voiceover synthesis from text (Cost: 3 credits).
+  - Request: `{ text, voiceId?, voiceGender?, speed?, format?, model?, provider?, fallbackProvider? }`
+- `POST /v1/ai/image` - Text-to-image visual asset generation (Cost: 2 credits/image).
+  - Request: `{ prompt, negativePrompt?, width?, height?, aspectRatio?, count?, model?, provider?, fallbackProvider? }`
+- `POST /v1/ai/video` - Synthetic B-roll footage generation (Cost: 15 credits).
+  - Request: `{ prompt, imageUrl?, durationSeconds?, fps?, resolution?, model?, provider?, fallbackProvider? }`
+- `POST /v1/ai/embedding` - Vector embeddings for semantic search and tagging (Cost: 1 credit).
+  - Request: `{ input: string | string[], dimensions?, model?, provider?, fallbackProvider? }`
+- `POST /v1/ai/vision` - Multimodal frame analysis and bounding box detection (Cost: 2 credits).
+  - Request: `{ images: [{ url?, base64?, mimeType }], prompt, maxTokens?, model?, provider?, fallbackProvider? }`
+- `POST /v1/ai/audio-analysis` - Silence interval detection, jump-cut markers, and beat detection (Cost: 2 credits).
+  - Request: `{ audioUrl?, audioBase64?, minSilenceSeconds?, detectBeats?, model?, provider?, fallbackProvider? }`
+
+#### Editor Convenience / Legacy Routes
+- `POST /v1/ai/transcribe` - Transcribe audio with word-level timestamps (Cost: 5 credits)
+- `POST /v1/ai/captions` - Generate dynamic animated subtitles (Cost: 3 credits)
+- `POST /v1/ai/smart-cut` - Detect voiceover silences for jump cuts (Cost: 2 credits)
+- `POST /v1/ai/broll` - Generate synthetic B-roll visual footage (Cost: 15 credits)
 
 ### 7. Video Rendering & Processing Jobs (`/api/v1/jobs`)
 - `POST /render` - Submit video timeline rendering export job (Cost: 10 credits)
