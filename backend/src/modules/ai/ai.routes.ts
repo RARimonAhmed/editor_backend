@@ -3,7 +3,9 @@ import { aiController } from './ai.controller.js';
 import { aiJobController } from './jobs/ai-job.controller.js';
 import { transcriptionController } from './transcription/transcription.controller.js';
 import { editingAnalysisController } from './editing-analysis/editing-analysis.controller.js';
+import { orchestrationController } from './orchestration/orchestration.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
+
 
 export async function aiRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -350,4 +352,56 @@ export async function aiRoutes(fastify: FastifyInstance) {
     },
     editingAnalysisController.getAnalysis.bind(editingAnalysisController)
   );
+
+  // --------------------------------------------------------------------------
+  // AI SHORT-VIDEO ORCHESTRATION & EDITOR COMMAND PLANS
+  // --------------------------------------------------------------------------
+  fastify.post(
+    '/short-orchestration',
+    {
+      schema: {
+        description: 'Orchestrate long-form video/project into 30s/45s/60s short clips (9:16/1:1/4:5) returning previewable Editor Command Plan',
+        tags: ['AI Short Orchestration'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    orchestrationController.createPlan.bind(orchestrationController)
+  );
+
+  fastify.post(
+    '/short-orchestration/validate',
+    {
+      schema: {
+        description: 'Validate custom or user-modified orchestration commands and preview projected timeline diff',
+        tags: ['AI Short Orchestration'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    orchestrationController.validatePlan.bind(orchestrationController)
+  );
+
+  fastify.post(
+    '/short-orchestration/apply',
+    {
+      schema: {
+        description: 'Apply approved orchestration command plan to project timeline via ProjectBloc with optimistic concurrency',
+        tags: ['AI Short Orchestration'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    orchestrationController.applyPlan.bind(orchestrationController)
+  );
+
+  fastify.get(
+    '/short-orchestration/:id',
+    {
+      schema: {
+        description: 'Retrieve previously computed orchestration command plan',
+        tags: ['AI Short Orchestration'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    orchestrationController.getPlan.bind(orchestrationController)
+  );
 }
+

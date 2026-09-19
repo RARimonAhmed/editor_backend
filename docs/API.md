@@ -371,7 +371,119 @@ TechXayan Creative's AI-assisted editing engine analyzes talking-head footage, p
   - Response: returns updated `ProjectDocument` with incremented version, updated timeline duration, and broadcasted `TIMELINE_MUTATION`.
 - `GET /v1/ai/editing-analysis/:id` - Fetch previously computed editing analysis document.
 
+#### AI Short-Video Orchestration & Editor Command Plans (`/v1/ai/short-orchestration`)
+
+TechXayan Creative's AI short-video orchestration engine converts long-form footage or existing projects into punchy, viral short-form social videos (30s, 45s, 60s) tailored for vertical platforms (`9:16`, `1:1`, `4:5`, `16:9`).
+
+> **CRITICAL ARCHITECTURAL INVARIANT**: AI orchestration **never modifies project data silently from the backend**. The pipeline analyzes the media, executes an 11-stage pipeline, and returns a structured **`EditorCommandPlan`** (`SET_CANVAS`, `CREATE_SEQUENCE`, `DELETE_RANGE`, `SET_REFRAME`, `ADD_CAPTIONS`, `ADD_AUDIO`, `SET_AUDIO_DUCKING`, `ADD_EFFECT`). The creator reviews this plan in `my_editor`'s UI, and the Flutter frontend applies the commands explicitly through `ProjectBloc` with optimistic concurrency (`expectedVersion`).
+
+##### Pipeline Flow
+```
+Long-Form Video / Project
+  │
+  ▼
+[1. Scene Detection] ──────────► Detects shot transitions and candidate keyframes
+  │
+  ▼
+[2. Speech Analysis] ──────────► Transcribes words, calculates cadence (WPM) & speaker diarization
+  │
+  ▼
+[3. Highlight Scoring] ────────► Scores segments for hook potential, viral sentiment, and energy
+  │
+  ▼
+[4. Silence & Filler Removal] ─► Pinpoints dead air >= 0.5s and spoken fillers within segments
+  │
+  ▼
+[5. Important Segment Selection] Selects optimal segments summing to target duration (30/45/60s)
+  │
+  ▼
+[6. Sequence Creation] ────────► CREATE_SEQUENCE multi-track timeline layout (video, audio, music, captions)
+  │
+  ▼
+[7. Face/Object Tracking & Reframe]
+                               ► SET_CANVAS (9:16/1:1/4:5) + SET_REFRAME pan/crop keyframes
+  │
+  ▼
+[8. Caption Command] ──────────► ADD_CAPTIONS with mobile safe-zone positioning & karaoke styling
+  │
+  ▼
+[9. Audio Ducking Command] ────► ADD_AUDIO (soundtrack) + SET_AUDIO_DUCKING during speech
+  │
+  ▼
+[10. Color Preset Command] ────► ADD_EFFECT (cinematic_warm / vibrant_boost / LUT filter)
+  │
+  ▼
+[11. Editor Command Plan] ─────► Previewable plan returned to client UI (Zero silent mutation!)
+  │
+  ▼
+[ProjectBloc Apply] ───────────► POST /v1/ai/short-orchestration/apply with expectedVersion
+```
+
+##### Endpoints
+- `POST /v1/ai/short-orchestration` - Generate an AI short-video orchestration plan (Cost: 4 credits).
+  - Request body:
+    ```json
+    {
+      "projectId": "optional-project-uuid",
+      "mediaAssetId": "optional-media-uuid",
+      "mediaUrl": "optional-url",
+      "targetDuration": 60,
+      "aspectRatio": "9:16",
+      "captionPreset": "bold_yellow",
+      "colorPreset": "cinematic_warm",
+      "musicPreset": "upbeat_ambient",
+      "duckingAmount": 0.2,
+      "autoReframeTracking": "face",
+      "silenceThreshold": 0.5
+    }
+    ```
+  - Response (HTTP 200):
+    ```json
+    {
+      "success": true,
+      "data": {
+        "id": "plan-uuid",
+        "title": "Podcast Master (60s Short)",
+        "targetDuration": 60,
+        "aspectRatio": "9:16",
+        "viralScore": 0.89,
+        "hookSummary": "Scene 1: The secret to creating amazing video content is simple...",
+        "commands": [
+          { "type": "SET_CANVAS", "width": 1080, "height": 1920, "aspectRatio": "9:16" },
+          { "type": "CREATE_SEQUENCE", "targetDuration": 60, "clips": [...] },
+          { "type": "DELETE_RANGE", "start": 4.8, "end": 5.4, "durationSaved": 0.6, "source": "silence" },
+          { "type": "SET_REFRAME", "clipId": "clip-short-1", "aspectRatio": "9:16", "keyframes": [...] },
+          { "type": "ADD_CAPTIONS", "preset": "bold_yellow", "style": { ... }, "captions": [...] },
+          { "type": "ADD_AUDIO", "preset": "upbeat_ambient", "duration": 60, "volume": 0.8 },
+          { "type": "SET_AUDIO_DUCKING", "duckVolume": 0.2, "duckingRanges": [...] },
+          { "type": "ADD_EFFECT", "effectType": "color_preset", "config": { "preset": "cinematic_warm" } }
+        ],
+        "segmentsUsed": [...],
+        "reframeTelemetry": [...],
+        "projectedTimeline": {
+          "originalDuration": 180.0,
+          "targetDuration": 60,
+          "projectedDuration": 60.0,
+          "aspectRatio": "9:16",
+          "resolution": { "width": 1080, "height": 1920 },
+          "totalClips": 5,
+          "totalSilencesCut": 4,
+          "durationSaved": 2.4,
+          "tracksCount": 4
+        }
+      }
+    }
+    ```
+- `POST /v1/ai/short-orchestration/validate` - Validate custom or modified orchestration commands and preview timeline diff.
+  - Request body: `{ projectId?, commands: OrchestrationCommand[], targetDuration?, aspectRatio? }`
+  - Response: `{ isValid: boolean, errors: string[], normalizedCommands: OrchestrationCommand[], previewTimeline: TimelinePreviewSummary }`
+- `POST /v1/ai/short-orchestration/apply` - Explicit user-initiated application of approved orchestration plan via `ProjectBloc`.
+  - Request body: `{ projectId, expectedVersion?, planId?, commands?, createSnapshot?: boolean }`
+  - Response: returns updated `ProjectDocument` with updated canvas, sequences, tracks, incremented version, and broadcasted `TIMELINE_MUTATION`.
+- `GET /v1/ai/short-orchestration/:id` - Retrieve previously computed orchestration command plan.
+
 #### Asynchronous AI Job System (`/v1/ai/jobs` & `/api/v1/ai/jobs`)
+
 - `POST /v1/ai/jobs` - Enqueue an asynchronous AI job with idempotency and deduplication (HTTP 202 Accepted).
   - Header: `Idempotency-Key: <string>` (optional, prevents duplicate queueing and double billing)
   - Request: `{ type, input, projectId?, provider?, model?, idempotencyKey?, timeoutMs? }`
