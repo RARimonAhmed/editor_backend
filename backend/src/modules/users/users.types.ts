@@ -9,6 +9,7 @@ export interface User {
   avatar_url?: string | null;
   role: UserRole;
   status: UserStatus;
+  email_verified_at?: string | null;
   deleted_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -20,5 +21,7 @@ export interface UserProfile {
   displayName: string;
   avatarUrl: string | null;
   role: UserRole;
+  emailVerified: boolean;
+  emailVerifiedAt?: string | null;
   createdAt: string;
 }

@@ -356,4 +356,117 @@ describe('Production Authentication & Identity Module', () => {
     });
     expect(loginRes.statusCode).toBe(401);
   });
+
+  // 11. LOGOUT-ALL SESSIONS
+  it('POST /v1/auth/logout-all terminates all sessions across all devices', async () => {
+    const multiSessionEmail = `multisession_${Date.now()}@techxayan.com`;
+    const password = 'MultiSessionPassword123!';
+
+    // Register user
+    await app.inject({
+      method: 'POST',
+      url: '/v1/auth/register',
+      payload: { email: multiSessionEmail, password, displayName: 'Multi Device User' },
+    });
+
+    // Login from Device 1 (Windows)
+    const dev1Res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: {
+        email: multiSessionEmail,
+        password,
+        device: { deviceFingerprint: 'win-pc-01', deviceType: 'windows', deviceName: 'Windows Workstation' },
+      },
+    });
+    const dev1Token = JSON.parse(dev1Res.body).data.tokens.accessToken;
+
+    // Login from Device 2 (Android)
+    const dev2Res = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/login',
+      payload: {
+        email: multiSessionEmail,
+        password,
+        device: { deviceFingerprint: 'android-tab-01', deviceType: 'android', deviceName: 'Android Studio Tablet' },
+      },
+    });
+    const dev2Token = JSON.parse(dev2Res.body).data.tokens.accessToken;
+
+    // Both tokens work
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: { Authorization: `Bearer ${dev1Token}` } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: { Authorization: `Bearer ${dev2Token}` } })).statusCode).toBe(200);
+
+    // Call logout-all from Device 1
+    const logoutAllRes = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/logout-all',
+      headers: { Authorization: `Bearer ${dev1Token}` },
+    });
+    expect(logoutAllRes.statusCode).toBe(200);
+    expect(JSON.parse(logoutAllRes.body).data.loggedOutAll).toBe(true);
+
+    // BOTH tokens must now be rejected
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: { Authorization: `Bearer ${dev1Token}` } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: { Authorization: `Bearer ${dev2Token}` } })).statusCode).toBe(401);
+  });
+
+  // 12. EMAIL VERIFICATION FLOW
+  it('Executes email verification architecture with single-use verification token', async () => {
+    const unverifiedEmail = `verify_me_${Date.now()}@techxayan.com`;
+
+    // 1. Register unverified user
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/register',
+      payload: {
+        email: unverifiedEmail,
+        password: 'SecurePassword123!',
+        displayName: 'Unverified Creator',
+      },
+    });
+    expect(regRes.statusCode).toBe(201);
+    const regBody = JSON.parse(regRes.body);
+    expect(regBody.data.user.emailVerified).toBe(false);
+    const accessToken = regBody.data.tokens.accessToken;
+
+    // 2. Request verification email token
+    const resendRes = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/resend-verification',
+      payload: { email: unverifiedEmail },
+    });
+    expect(resendRes.statusCode).toBe(200);
+    const resendBody = JSON.parse(resendRes.body);
+    expect(resendBody.data.verificationToken).toBeDefined();
+    const token = resendBody.data.verificationToken;
+
+    // 3. Confirm email with token
+    const verifyRes = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/verify-email',
+      payload: { token },
+    });
+    expect(verifyRes.statusCode).toBe(200);
+    const verifyBody = JSON.parse(verifyRes.body);
+    expect(verifyBody.success).toBe(true);
+
+    // 4. Token cannot be reused (single-use guarantee)
+    const reuseVerifyRes = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/verify-email',
+      payload: { token },
+    });
+    expect(reuseVerifyRes.statusCode).toBe(401);
+
+    // 5. Fetch profile and verify emailVerified status is true
+    const meRes = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    expect(meRes.statusCode).toBe(200);
+    const meBody = JSON.parse(meRes.body);
+    expect(meBody.data.emailVerified).toBe(true);
+  });
 });

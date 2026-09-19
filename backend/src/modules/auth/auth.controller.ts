@@ -8,6 +8,8 @@ import {
   logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  verifyEmailSchema,
+  resendVerificationSchema,
   updateProfileSchema,
 } from './auth.schemas.js';
 import { createSuccessResponse } from '../../core/response.js';
@@ -119,6 +121,28 @@ export class AuthController {
     return reply.status(200).send(
       createSuccessResponse({ message: 'Password has been successfully updated. Please login with your new password.' })
     );
+  }
+
+  // POST /v1/auth/verify-email
+  async verifyEmail(request: FastifyRequest, reply: FastifyReply) {
+    const parseResult = verifyEmailSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      throw new ValidationError('Invalid verification token payload', parseResult.error.format());
+    }
+
+    const result = await authService.verifyEmail(parseResult.data.token);
+    return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  // POST /v1/auth/resend-verification
+  async resendVerification(request: FastifyRequest, reply: FastifyReply) {
+    const parseResult = resendVerificationSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      throw new ValidationError('Valid email is required', parseResult.error.format());
+    }
+
+    const result = await authService.resendVerification(parseResult.data.email);
+    return reply.status(200).send(createSuccessResponse(result));
   }
 
   // GET /v1/me

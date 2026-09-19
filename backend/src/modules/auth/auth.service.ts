@@ -56,11 +56,19 @@ interface StoredPasswordReset {
   used: boolean;
 }
 
+interface StoredEmailVerification {
+  userId: string;
+  token: string;
+  expiresAt: Date;
+  used: boolean;
+}
+
 // In-memory repositories for local/mock/test execution
 const mockUsers = new Map<string, User>();
 const mockProfiles = new Map<string, Record<string, any>>();
 const mockSessions = new Map<string, StoredSession>();
 const mockPasswordResets = new Map<string, StoredPasswordReset>();
+const mockEmailVerifications = new Map<string, StoredEmailVerification>();
 const mockFailedLogins = new Map<string, { count: number; lockedUntil?: number }>();
 
 export class AuthService {
@@ -385,6 +393,71 @@ export class AuthService {
   }
 
   // ============================================================================
+  // EMAIL VERIFICATION ARCHITECTURE
+  // ============================================================================
+  createEmailVerificationToken(userId: string): string {
+    const token = crypto.randomBytes(32).toString('hex');
+    mockEmailVerifications.set(token, {
+      userId,
+      token,
+      expiresAt: new Date(Date.now() + 24 * 3600 * 1000), // 24 hours
+      used: false,
+    });
+    return token;
+  }
+
+  async verifyEmail(token: string): Promise<{ message: string; email: string }> {
+    const record = mockEmailVerifications.get(token);
+    if (!record || record.used || new Date() > record.expiresAt) {
+      throw new AuthenticationError('Invalid, expired, or already used email verification token');
+    }
+
+    const user = await this.findUserById(record.userId);
+    if (!user || user.status === 'deleted') {
+      throw new NotFoundError('User not found');
+    }
+
+    const now = new Date().toISOString();
+    user.email_verified_at = now;
+    user.updated_at = now;
+    record.used = true;
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query('UPDATE users SET email_verified_at = CURRENT_TIMESTAMP WHERE id = $1;', [user.id]);
+      }
+    } catch {
+      // fallback
+    }
+
+    logger.info({ userId: user.id, email: user.email }, 'Email verified successfully');
+    return {
+      message: 'Email address has been successfully verified',
+      email: user.email,
+    };
+  }
+
+  async resendVerification(email: string): Promise<{ message: string; verificationToken?: string }> {
+    const normalized = email.toLowerCase().trim();
+    const user = await this.findUserByEmail(normalized);
+
+    const successMsg = 'If the email is registered, a verification link has been dispatched.';
+    if (!user || user.status === 'deleted') {
+      return { message: successMsg };
+    }
+
+    if (user.email_verified_at) {
+      return { message: 'This email address has already been verified.' };
+    }
+
+    const token = this.createEmailVerificationToken(user.id);
+    return {
+      message: successMsg,
+      verificationToken: env.NODE_ENV !== 'production' ? token : undefined,
+    };
+  }
+
+  // ============================================================================
   // PROFILE & ACCOUNT MANAGEMENT
   // ============================================================================
   async getProfile(userId: string): Promise<UserProfile & { preferences?: any; bio?: string }> {
@@ -565,6 +638,8 @@ export class AuthService {
       displayName: user.display_name,
       avatarUrl: user.avatar_url || null,
       role: user.role,
+      emailVerified: Boolean(user.email_verified_at),
+      emailVerifiedAt: user.email_verified_at || null,
       createdAt: user.created_at,
     };
   }

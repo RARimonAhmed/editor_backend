@@ -172,7 +172,45 @@ export async function authRoutes(fastify: FastifyInstance) {
     authController.resetPassword.bind(authController)
   );
 
-  // 9. Profile Management (/me endpoints)
+  // 9. Verify Email
+  fastify.post(
+    '/verify-email',
+    {
+      schema: {
+        description: 'Verify user email address with single-use verification token',
+        tags: ['Authentication'],
+        body: {
+          type: 'object',
+          required: ['token'],
+          properties: {
+            token: { type: 'string' },
+          },
+        },
+      },
+    },
+    authController.verifyEmail.bind(authController)
+  );
+
+  // 10. Resend Verification Email
+  fastify.post(
+    '/resend-verification',
+    {
+      schema: {
+        description: 'Resend email verification token for pending account',
+        tags: ['Authentication'],
+        body: {
+          type: 'object',
+          required: ['email'],
+          properties: {
+            email: { type: 'string', format: 'email' },
+          },
+        },
+      },
+    },
+    authController.resendVerification.bind(authController)
+  );
+
+  // 11. Profile Management (/me endpoints)
   fastify.get(
     '/me',
     {

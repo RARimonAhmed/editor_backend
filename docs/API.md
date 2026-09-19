@@ -62,6 +62,8 @@ Authorization: Bearer <access_token>
 - `POST /logout-all` - Terminate all active sessions across all devices
 - `POST /forgot-password` - Request a secure password reset link token
 - `POST /reset-password` - Reset password with token (invalidates all existing sessions)
+- `POST /verify-email` - Verify email address with single-use verification token
+- `POST /resend-verification` - Resend email verification token for pending account
 
 ### 3. User Profile & Account (`/v1/me` & `/api/v1/me`)
 - `GET /me` - Retrieve current authenticated user profile, devices, and preferences
