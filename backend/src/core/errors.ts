@@ -43,6 +43,15 @@ export class ConflictError extends AppError {
   }
 }
 
+export class ConcurrencyConflictError extends AppError {
+  constructor(
+    message = 'Conflict: this resource was modified by another session or device. Please refresh and merge changes.',
+    details?: unknown
+  ) {
+    super(message, 409, 'CONCURRENCY_CONFLICT', details);
+  }
+}
+
 export class InsufficientCreditsError extends AppError {
   constructor(message = 'Insufficient credit balance for this operation', details?: unknown) {
     super(message, 402, 'INSUFFICIENT_CREDITS', details);

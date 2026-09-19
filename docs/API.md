@@ -70,12 +70,22 @@ Authorization: Bearer <access_token>
 - `PATCH /me` - Update profile (`displayName`, `avatarUrl`, `bio`, `timezone`, `preferences`)
 - `DELETE /me` - Soft-delete user account and immediately terminate all active sessions
 
-### 3. Video Projects (`/api/v1/projects`)
-- `POST /` - Create a new video project (`title`, `resolutionWidth`, `resolutionHeight`, `framerate`, `aspectRatio`, `timelineData`)
-- `GET /` - List all projects belonging to the authenticated user
-- `GET /:id` - Retrieve full project timeline tree, tracks, clips, and markers
-- `PUT /:id` - Update project timeline tracks, title, or video configuration
-- `DELETE /:id` - Archive or delete project
+### 4. Cloud Video Projects (`/v1/projects` & `/api/v1/projects`)
+- `POST /` - Create a new video project (`title`, `description`, `canvas`, `timeline`, `assets`, `settings`)
+- `GET /` - List & search projects (`search`, `status: active|archived|deleted|all`, `limit`, `offset`, `sortBy`, `sortOrder`)
+- `GET /:id` - Open project (returns `metadata`, `canvas`, `timeline`, `assets`, `versions`, `settings`; supports `ETag` and `If-None-Match: 304`)
+- `PATCH /:id` - Update or rename project with optimistic concurrency control (`expectedVersion`, `If-Match` header)
+- `POST /:id/autosave` - Non-destructive autosave cloud sync endpoint with multi-device conflict checking (`baseVersion`, `device`, `canvas`, `timeline`, `assets`, `settings`)
+- `POST /:id/duplicate` - Duplicate project into a fresh project starting at version 1
+- `POST /:id/archive` - Archive video project
+- `POST /:id/restore` - Restore archived or soft-deleted project
+- `DELETE /:id` - Soft-delete video project (recoverable)
+- `GET /:id/versions` - Retrieve immutable version history snapshots
+
+#### Optimistic Concurrency Control
+When updating via `PATCH /v1/projects/:id` or `POST /v1/projects/:id/autosave`:
+- Pass `expectedVersion: <number>` or HTTP `If-Match: W/"<etag>"`.
+- If another device has modified the project on the cloud (server version > expected version), the API returns HTTP 409 `CONCURRENCY_CONFLICT` with current server version details, preventing silent data overwrite.
 
 ### 4. Media Storage (`/api/v1/media`)
 - `POST /upload-url` - Request presigned direct-to-S3 upload URL (`fileName`, `mimeType`, `fileSizeBytes`)
