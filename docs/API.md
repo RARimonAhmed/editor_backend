@@ -87,31 +87,66 @@ When updating via `PATCH /v1/projects/:id` or `POST /v1/projects/:id/autosave`:
 - Pass `expectedVersion: <number>` or HTTP `If-Match: W/"<etag>"`.
 - If another device has modified the project on the cloud (server version > expected version), the API returns HTTP 409 `CONCURRENCY_CONFLICT` with current server version details, preventing silent data overwrite.
 
-### 4. Media Storage (`/api/v1/media`)
-- `POST /upload-url` - Request presigned direct-to-S3 upload URL (`fileName`, `mimeType`, `fileSizeBytes`)
-- `POST /confirm` - Confirm completed S3 upload and index metadata into media catalog
-- `GET /` - List user media assets (supports query parameter `?projectId=<id>`)
+### 5. Media Storage (`/v1/media` & `/api/v1/media`)
 
-### 5. AI Video Services (`/api/v1/ai`)
+TechXayan Creative's media subsystem provides an enterprise-grade object storage abstraction (supporting AWS S3, Cloudflare R2, and MinIO) with strict separation between binary payloads and PostgreSQL metadata.
+
+#### Asset Categories & Size Limits
+- `video`: Up to 50 GB (supports single-part or multipart resumable uploads)
+- `audio`: Up to 2 GB
+- `image`: Up to 100 MB
+- `font`: Up to 50 MB (.ttf, .otf, .woff, .woff2)
+- `lut`: Up to 100 MB (.cube, .3dl)
+- `sticker`: Up to 20 MB (.png, .webp, .svg, .gif)
+- `template`: Up to 500 MB (.zip, .json, .tar.gz)
+
+#### Lifecycle State Machine
+```
+[Client Presign] ──► UPLOADING ──► [Client Complete] ──► PROCESSING (Security Scan) ──► READY
+                           │                                          │
+                           ▼                                          ▼
+                         CANCELLED / FAILED                        FAILED
+                                      │
+                                      ▼
+                                   DELETED (Soft-delete & S3 purge)
+```
+
+#### Media Endpoints
+- `POST /v1/media/presign` - Request single-part or multipart upload session.
+  - Automatically activates multipart chunking (5MB minimum part size) for files $\ge$ 50MB or when `uploadType: 'multipart'`.
+  - Request body: `{ fileName, mimeType, fileSizeBytes, category?, projectId?, checksumSha256?, uploadType?, partCount? }`
+  - Returns: `{ assetId, uploadId, uploadType, partSize, parts: [{ partNumber, uploadUrl }], uploadUrl }`
+- `POST /v1/media/complete` - Finalize upload, verify checksum, execute security scan hook, and transition asset to `READY`.
+  - Request body: `{ assetId, uploadId?, parts?: [{ partNumber, eTag }], checksumSha256? }`
+- `POST /v1/media/upload` - Direct API upload for small creative assets (LUTs, fonts, stickers, audio up to 50MB).
+  - Request body: `{ fileName, mimeType, fileSizeBytes, dataBase64, category?, projectId?, checksumSha256? }`
+- `GET /v1/media/:id` - Fetch asset metadata and fresh presigned download URL (valid for 1 hour).
+- `DELETE /v1/media/:id` - Soft-delete asset metadata and remove underlying binary object from storage bucket.
+- `POST /v1/media/:id/cancel` - Cancel active upload and abort S3 multipart session.
+- `POST /v1/media/:id/retry` - Re-initialize failed or cancelled upload session.
+- `GET /v1/media` - List & search user media assets (`projectId`, `category`, `status`, `search`, `limit`, `offset`).
+- `POST /v1/media/upload-url` & `POST /v1/media/confirm` - Backward-compatible legacy endpoints.
+
+### 6. AI Video Services (`/api/v1/ai`)
 - `POST /transcribe` - Transcribe audio with word-level timestamps (Cost: 5 credits)
 - `POST /captions` - Generate dynamic animated subtitles (Cost: 3 credits)
 - `POST /smart-cut` - Detect voiceover silences for jump cuts (Cost: 2 credits)
 - `POST /broll` - Generate synthetic B-roll visual footage (Cost: 15 credits)
 
-### 6. Video Rendering & Processing Jobs (`/api/v1/jobs`)
+### 7. Video Rendering & Processing Jobs (`/api/v1/jobs`)
 - `POST /render` - Submit video timeline rendering export job (Cost: 10 credits)
 - `GET /:id` - Poll job rendering progress (`0%` to `100%`) and download URL
 - `POST /:id/cancel` - Cancel active rendering job
 
-### 7. Credits & Billing (`/api/v1/credits`)
+### 8. Credits & Billing (`/api/v1/credits`)
 - `GET /balance` - Retrieve current credit balance
 - `GET /history` - Retrieve credit transaction ledger
 
-### 8. Subscriptions (`/api/v1/subscriptions`)
+### 9. Subscriptions (`/api/v1/subscriptions`)
 - `GET /plans` - View available subscription tiers (`Free`, `Pro`, `Studio`)
 - `GET /current` - View current user subscription status and renewal date
 
-### 9. Webhooks (`/api/v1/webhooks`)
+### 10. Webhooks (`/api/v1/webhooks`)
 - `POST /stripe` - Ingest Stripe subscription billing events
 - `POST /worker-callback` - Ingest internal transcoding worker completion notices
 
