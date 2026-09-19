@@ -172,8 +172,81 @@ AIRequest ──► AI Gateway ──► Rate Limiting ──► Credits Check �
 - `POST /v1/ai/audio-analysis` - Silence interval detection, jump-cut markers, and beat detection (Cost: 2 credits).
   - Request: `{ audioUrl?, audioBase64?, minSilenceSeconds?, detectBeats?, model?, provider?, fallbackProvider? }`
 
-#### Editor Convenience / Legacy Routes
-- `POST /v1/ai/transcribe` - Transcribe audio with word-level timestamps (Cost: 5 credits)
+#### AI Speech-to-Text & Subtitle Pipeline (`/v1/ai/transcribe`, `/v1/ai/transcriptions`)
+
+TechXayan Creative's speech-to-text pipeline extracts audio from imported video/audio assets or direct URLs, transcribes speech with word-level timing (0.000s precision), performs multi-speaker diarization (`spk_1`, `spk_2`), and formats results directly into SubRip (`.srt`), WebVTT (`.vtt`), and native timeline `Caption` clips ready to drag-and-drop onto the video editor track.
+
+- **Pipeline Flow**: `Media (URL / MediaAssetId / AudioBase64) ──► Audio Extraction / Ingestion ──► AI Gateway (Speech-to-Text) ──► Word Timings & Diarization ──► Caption Segments ──► SRT / VTT Formats ──► Timeline Caption Clips`
+- `POST /v1/ai/transcribe` - Transcribe audio/video and generate transcription document (Cost: 5 credits).
+  - Request body:
+    ```json
+    {
+      "mediaUrl": "https://example.com/interview.mp4",
+      "mediaAssetId": "optional-uuid-from-media-storage",
+      "audioBase64": "optional-base64-audio",
+      "projectId": "optional-project-uuid",
+      "language": "en",
+      "prompt": "Technical context or jargon hints",
+      "diarize": true,
+      "style": {
+        "fontSize": 48,
+        "fontFamily": "Inter",
+        "textColor": "#FFFFFF",
+        "backgroundColor": "#00000080",
+        "highlightColor": "#FFD700",
+        "position": "bottom"
+      }
+    }
+    ```
+  - Response (HTTP 200):
+    ```json
+    {
+      "success": true,
+      "data": {
+        "id": "transcription-uuid",
+        "userId": "user-uuid",
+        "projectId": "project-uuid",
+        "transcript": "Full text transcript...",
+        "language": "en",
+        "duration": 42.5,
+        "words": [
+          { "word": "Welcome", "start": 0.0, "end": 0.4, "confidence": 0.98, "speakerId": "spk_1" }
+        ],
+        "speakers": [
+          { "id": "spk_1", "name": "Speaker 1", "color": "#4A90E2", "totalWords": 85 }
+        ],
+        "segments": [
+          {
+            "id": "segment-uuid",
+            "start": 0.0,
+            "end": 3.3,
+            "text": "Welcome back to TechXayan Creative.",
+            "speakerId": "spk_1",
+            "speakerName": "Speaker 1",
+            "words": [...]
+          }
+        ],
+        "captionObjects": [
+          {
+            "id": "clip-uuid",
+            "trackId": "captions-track",
+            "type": "text",
+            "start": 0.0,
+            "duration": 3.3,
+            "content": "Welcome back to TechXayan Creative.",
+            "style": { "fontSize": 48, "color": "#FFFFFF", "position": "bottom" },
+            "words": [...]
+          }
+        ],
+        "srt": "1\n00:00:00,000 --> 00:00:03,300\n[Speaker 1] Welcome back to TechXayan Creative.\n\n",
+        "vtt": "WEBVTT\n\n1\n00:00:00.000 --> 00:00:03.300\n<v Speaker 1>Welcome back to TechXayan Creative.\n\n",
+        "createdAt": "2026-09-20T00:00:00.000Z"
+      }
+    }
+    ```
+- `GET /v1/ai/transcriptions/:id` - Retrieve full transcription document with segments, words, speakers, and timeline caption clips.
+- `GET /v1/ai/transcriptions/:id/srt` - Download/stream raw SubRip subtitle file (`Content-Type: text/plain; charset=utf-8`).
+- `GET /v1/ai/transcriptions/:id/vtt` - Download/stream raw WebVTT subtitle file (`Content-Type: text/vtt; charset=utf-8`).
 - `POST /v1/ai/captions` - Generate dynamic animated subtitles (Cost: 3 credits)
 - `POST /v1/ai/smart-cut` - Detect voiceover silences for jump cuts (Cost: 2 credits)
 - `POST /v1/ai/broll` - Generate synthetic B-roll visual footage (Cost: 15 credits)

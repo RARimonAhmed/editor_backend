@@ -96,6 +96,7 @@ export interface WordTimestamp {
   start: number;
   end: number;
   confidence?: number;
+  speakerId?: string;
 }
 
 export interface SubtitleSegment {
@@ -103,6 +104,8 @@ export interface SubtitleSegment {
   start: number;
   end: number;
   text: string;
+  speakerId?: string;
+  speakerName?: string;
   words?: WordTimestamp[];
 }
 
@@ -113,10 +116,12 @@ export interface AISpeechToTextRequest {
   language?: string;
   prompt?: string;
   wordTimestamps?: boolean;
+  speakerDiarization?: boolean;
   model?: string;
   provider?: string;
   fallbackProvider?: string;
   timeoutMs?: number;
+  skipCreditDeduction?: boolean;
 }
 
 export interface AISpeechToTextResponse {
@@ -125,6 +130,7 @@ export interface AISpeechToTextResponse {
   durationSeconds: number;
   segments: SubtitleSegment[];
   words?: WordTimestamp[];
+  speakers?: Array<{ id: string; name: string; color: string }>;
   gateway: AIGatewayMetadata;
 }
 

@@ -92,12 +92,12 @@ export async function buildApp(): Promise<FastifyInstance> {
         .send(createErrorResponse(error.code, error.message, error.details, reqId));
     }
 
-    // Fastify built-in validation error
-    if (error.validation) {
-      logger.warn({ reqId, validation: error.validation }, 'Request validation failed');
+    // Fastify built-in validation error or Zod schema error
+    if (error.validation || error.name === 'ZodError' || (error as any).issues) {
+      logger.warn({ reqId, validation: error.validation || (error as any).issues }, 'Request validation failed');
       return reply
         .status(400)
-        .send(createErrorResponse('VALIDATION_ERROR', 'Request validation failed', error.validation, reqId));
+        .send(createErrorResponse('VALIDATION_ERROR', 'Request validation failed', error.validation || (error as any).issues, reqId));
     }
 
     // Check if error has custom statusCode & code attached

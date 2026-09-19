@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { aiController } from './ai.controller.js';
 import { aiJobController } from './jobs/ai-job.controller.js';
+import { transcriptionController } from './transcription/transcription.controller.js';
 import { authenticate } from '../auth/auth.middleware.js';
 
 export async function aiRoutes(fastify: FastifyInstance) {
@@ -143,12 +144,48 @@ export async function aiRoutes(fastify: FastifyInstance) {
     '/transcribe',
     {
       schema: {
-        description: 'Transcribe audio/video to text with word-level timestamps (Legacy)',
+        description: 'Transcribe audio/video to rich text, word-level timestamps, speakers, SRT, VTT, and timeline Caption objects',
         tags: ['AI Video Services'],
         security: [{ bearerAuth: [] }],
       },
     },
-    aiController.transcribe.bind(aiController)
+    transcriptionController.transcribe.bind(transcriptionController)
+  );
+
+  fastify.get(
+    '/transcriptions/:id',
+    {
+      schema: {
+        description: 'Get full speech-to-text transcription document with words, speakers, and Caption objects',
+        tags: ['AI Video Services'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    transcriptionController.getTranscription.bind(transcriptionController)
+  );
+
+  fastify.get(
+    '/transcriptions/:id/srt',
+    {
+      schema: {
+        description: 'Download or stream raw SubRip (.srt) subtitle file',
+        tags: ['AI Video Services'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    transcriptionController.getSrt.bind(transcriptionController)
+  );
+
+  fastify.get(
+    '/transcriptions/:id/vtt',
+    {
+      schema: {
+        description: 'Download or stream raw WebVTT (.vtt) subtitle file',
+        tags: ['AI Video Services'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    transcriptionController.getVtt.bind(transcriptionController)
   );
 
   fastify.post(
