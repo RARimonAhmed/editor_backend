@@ -53,11 +53,20 @@ Authorization: Bearer <access_token>
 - `GET /health` - Liveness check (status, uptime)
 - `GET /ready` - Readiness check (verifies database, redis, and storage dependencies)
 
-### 2. Authentication (`/api/v1/auth`)
-- `POST /register` - Register a new account (`email`, `password`, `displayName`)
-- `POST /login` - Authenticate with email/password to receive access & refresh tokens
-- `POST /refresh` - Exchange refresh token for fresh access token
-- `GET /me` - Retrieve current authenticated user profile
+### 2. Authentication & Identity (`/v1/auth` & `/api/v1/auth`)
+- `POST /register` - Register a new account (`email`, `password`, `displayName`, `device`)
+- `POST /login` - Authenticate with email/password (brute-force protected, returns tokens & session)
+- `POST /oauth/:provider` - Authenticate via OAuth (`google`, `apple`) with ID Token
+- `POST /refresh` - Single-use refresh token rotation (with automated reuse detection)
+- `POST /logout` - Revoke current active session
+- `POST /logout-all` - Terminate all active sessions across all devices
+- `POST /forgot-password` - Request a secure password reset link token
+- `POST /reset-password` - Reset password with token (invalidates all existing sessions)
+
+### 3. User Profile & Account (`/v1/me` & `/api/v1/me`)
+- `GET /me` - Retrieve current authenticated user profile, devices, and preferences
+- `PATCH /me` - Update profile (`displayName`, `avatarUrl`, `bio`, `timezone`, `preferences`)
+- `DELETE /me` - Soft-delete user account and immediately terminate all active sessions
 
 ### 3. Video Projects (`/api/v1/projects`)
 - `POST /` - Create a new video project (`title`, `resolutionWidth`, `resolutionHeight`, `framerate`, `aspectRatio`, `timelineData`)

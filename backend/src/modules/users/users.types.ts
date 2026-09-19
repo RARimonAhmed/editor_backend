@@ -1,4 +1,5 @@
-export type UserRole = 'user' | 'pro' | 'admin';
+export type UserRole = 'user' | 'pro' | 'admin' | 'system';
+export type UserStatus = 'active' | 'suspended' | 'pending_verification' | 'deleted';
 
 export interface User {
   id: string;
@@ -7,7 +8,8 @@ export interface User {
   display_name: string;
   avatar_url?: string | null;
   role: UserRole;
-  status: 'active' | 'suspended';
+  status: UserStatus;
+  deleted_at?: string | null;
   created_at: string;
   updated_at: string;
 }

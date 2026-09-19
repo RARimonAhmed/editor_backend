@@ -19,6 +19,8 @@ import { storageService } from './services/storage/index.js';
 
 // Route modules
 import { authRoutes } from './modules/auth/auth.routes.js';
+import { authController } from './modules/auth/auth.controller.js';
+import { authenticate } from './modules/auth/auth.middleware.js';
 import { projectsRoutes } from './modules/projects/projects.routes.js';
 import { mediaRoutes } from './modules/media/media.routes.js';
 import { creditsRoutes } from './modules/credits/credits.routes.js';
@@ -225,19 +227,25 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(collaborationWsRoutes);
 
   // Register API v1 Routes
-  await app.register(
-    async (v1) => {
-      await v1.register(authRoutes, { prefix: '/auth' });
-      await v1.register(projectsRoutes, { prefix: '/projects' });
-      await v1.register(mediaRoutes, { prefix: '/media' });
-      await v1.register(creditsRoutes, { prefix: '/credits' });
-      await v1.register(subscriptionsRoutes, { prefix: '/subscriptions' });
-      await v1.register(aiRoutes, { prefix: '/ai' });
-      await v1.register(jobsRoutes, { prefix: '/jobs' });
-      await v1.register(webhooksRoutes, { prefix: '/webhooks' });
-    },
-    { prefix: env.API_PREFIX }
-  );
+  const registerV1Modules = async (v1: FastifyInstance) => {
+    await v1.register(authRoutes, { prefix: '/auth' });
+    await v1.register(projectsRoutes, { prefix: '/projects' });
+    await v1.register(mediaRoutes, { prefix: '/media' });
+    await v1.register(creditsRoutes, { prefix: '/credits' });
+    await v1.register(subscriptionsRoutes, { prefix: '/subscriptions' });
+    await v1.register(aiRoutes, { prefix: '/ai' });
+    await v1.register(jobsRoutes, { prefix: '/jobs' });
+    await v1.register(webhooksRoutes, { prefix: '/webhooks' });
+
+    // Direct /me endpoints
+    v1.get('/me', { preHandler: [authenticate] }, authController.getMe.bind(authController));
+    v1.patch('/me', { preHandler: [authenticate] }, authController.updateMe.bind(authController));
+    v1.delete('/me', { preHandler: [authenticate] }, authController.deleteMe.bind(authController));
+  };
+
+  // Register on both /api/v1 and /v1 for complete client compatibility
+  await app.register(registerV1Modules, { prefix: '/api/v1' });
+  await app.register(registerV1Modules, { prefix: '/v1' });
 
   return app;
 }
