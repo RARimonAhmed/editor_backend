@@ -321,6 +321,18 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     reviewController.updateComment.bind(reviewController)
   );
 
+  fastify.patch(
+    '/:id/comments/:commentId/resolve',
+    {
+      schema: {
+        description: 'Resolve a review comment directly',
+        tags: ['Project Review & Comments'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    reviewController.updateComment.bind(reviewController)
+  );
+
   // 18. Delete Review Comment
   fastify.delete(
     '/:id/comments/:commentId',

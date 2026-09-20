@@ -651,4 +651,86 @@ Enforces role-based permissions across project operations and real-time multipla
 - `PATCH /v1/projects/:id/comments/:commentId/unresolve` - Reopen an existing resolved comment.
 - `DELETE /v1/projects/:id/comments/:commentId` - Delete a comment (author or project owner).
 
+---
+
+## 16. Realtime Infrastructure (WebSocket & SSE Streaming)
+
+Multi-transport event distribution delivering low-latency updates directly to the Flutter editing application.
+
+### Supported Transports
+1. **Server-Sent Events (SSE)**: `GET /v1/events/stream?channels=user:{id},project:{id},job:{id}`
+   - Header: `Authorization: Bearer <token>`
+   - Content-Type: `text/event-stream`
+2. **WebSocket Gateway**: `GET /ws/v1/realtime`
+   - Subprotocol / Query: `?token=<jwt_token>`
+   - Bi-directional framing: dynamic subscription via `{"action":"subscribe","channel":"project:123"}`
+
+### Domain Event Contract (11 Standard Events)
+| Event Name | Channel Pattern | Payload Summary |
+|---|---|---|
+| `upload_progress` | `user:{id}` | `mediaId`, `bytesUploaded`, `totalBytes`, `percentage` |
+| `media_ready` | `user:{id}`, `project:{id}` | `mediaId`, `duration`, `thumbnailUrl`, `proxyUrl`, `status: "ready"` |
+| `ai_job_progress` | `job:{id}`, `user:{id}` | `jobId`, `progress` (0-100), `step` |
+| `ai_job_complete` | `job:{id}`, `user:{id}` | `jobId`, `output`, `creditCost`, `executionDurationMs` |
+| `ai_job_failed` | `job:{id}`, `user:{id}` | `jobId`, `error`, `code` |
+| `export_complete` | `job:{id}`, `user:{id}` | `jobId`, `downloadUrl`, `fileSizeBytes`, `resolution` |
+| `export_failed` | `job:{id}`, `user:{id}` | `jobId`, `error` |
+| `project_shared` | `user:{id}` | `projectId`, `sharedByUserId`, `role` |
+| `comment_added` | `project:{id}` | `projectId`, `commentId`, `timecode`, `content`, `author` |
+| `subscription_changed` | `user:{id}` | `userId`, `plan`, `monthlyAllowance` |
+| `credit_warning` | `user:{id}` | `userId`, `currentBalance`, `threshold` |
+
+---
+
+## 17. External Webhook Ingestion Engine
+
+Cryptographically secure ingestion for payment processors and third-party media transcoders. Unsigned or malformed payloads are strictly rejected.
+
+### Endpoints
+- `POST /v1/webhooks/stripe` - Verifies `stripe-signature` header via HMAC-SHA256 and provisions user allowances idempotently.
+- `POST /v1/webhooks/worker-callback` - Internal secure callback from distributed render workers.
+- `POST /v1/webhooks/providers/:provider` - Generic signed callback for third-party AI generators.
+- `GET /v1/webhooks/dead-letter` - Protected endpoint to inspect failed webhooks exceeding max retry attempts.
+- `POST /v1/webhooks/dead-letter/:id/retry` - Manually replay dead-lettered webhook.
+
+### Reliability Guarantee
+- **Signature Verification**: Prevents forged event injection.
+- **Anti-Replay Idempotency**: Deduplicates repeated transmissions via in-memory/Redis message ID tracking.
+- **Exponential Backoff**: Automatic retry up to 3 attempts with exponential delay.
+- **Dead-Letter Queue (DLQ)**: Preserves terminal failures with error traces for forensic inspection.
+
+---
+
+## 18. Observability & Administrative Governance
+
+Enterprise observability and administrative APIs protected by `requireAdmin` (`x-admin-key` header or `ADMIN`/`SUPERADMIN` JWT role).
+
+### Metrics & Health
+- `GET /health` - HTTP 200 `{ status: "ok", uptimeSeconds, timestamp }`
+- `GET /ready` - HTTP 200 `{ ready: true, checks: { database, redis, storage } }`
+- `GET /metrics` - Prometheus metrics exposition format:
+  - `http_requests_total`, `http_request_duration_seconds`
+  - `ai_tokens_consumed_total`, `ai_jobs_total`
+  - `job_queue_depth`, `database_connected`, `redis_connected`
+
+### Admin Endpoints (`/v1/admin`)
+- `GET /v1/admin/users` - Paginated user directory with roles and credit balances.
+- `GET /v1/admin/projects` - System-wide projects telemetry and version data.
+- `GET /v1/admin/jobs` - Active and completed BullMQ background jobs.
+- `GET /v1/admin/failed-jobs` - All failed jobs across queues.
+- `POST /v1/admin/retry/:jobId` - Manually retry a failed background job.
+- `GET /v1/admin/usage` - Aggregated AI and rendering consumption statistics.
+- `GET /v1/admin/subscriptions` - Subscription status overview across all active tiers.
+- `POST /v1/admin/credits` - Admin credit adjustments: `{ userId, amount, reason }`.
+- `GET /v1/admin/audit-logs` - Immutable audit logs for compliance and security forensics.
+
+---
+
+## 19. OpenAPI Specification & Flutter / Dart Client Models
+
+- **OpenAPI 3.1 Spec**: Located at [`docs/openapi.yaml`](../docs/openapi.yaml).
+- **Dart / Flutter Models Package**: Located at [`packages/client_models`](../packages/client_models).
+  - Includes type-safe JSON serialization for `User`, `Project`, `CanvasConfig`, `TimelineClip`, `MediaAsset`, `AiJob`, `EditorCommand`, `EditorCommandPlan`, `CommandExecutionPreview`, and `RealtimeEvent`.
+
+
 

@@ -6,6 +6,7 @@ import { collaborationManager } from '../../collaboration/collaboration.manager.
 import { redisService } from '../../../services/redis/index.js';
 import { logger } from '../../../core/logger.js';
 import { AIJobEvent } from './ai-job.types.js';
+import { realtimeService } from '../../realtime/realtime.service.js';
 
 export interface AIJobSubscriber {
   id: string;
@@ -74,13 +75,26 @@ export class AIJobNotificationHub {
       for (const listener of sseListeners) {
         try {
           listener(event);
-        } catch (err) {
-          logger.warn({ err, jobId: event.jobId }, 'Error dispatching AI job event to SSE listener');
+        } catch {
+          // ignore broken pipe
         }
       }
     }
 
-    // 3. Collaborative Project Room (if attached)
+    // 3. Central Realtime Multi-Channel Broadcast
+    try {
+      if (event.event === 'JOB_PROGRESS') {
+        realtimeService.notifyAiJobProgress(event.jobId, event.userId, event.progress, (event as any).currentStep);
+      } else if (event.event === 'JOB_COMPLETED') {
+        realtimeService.notifyAiJobComplete(event.jobId, event.userId, (event as any).output, (event as any).cost);
+      } else if (event.event === 'JOB_FAILED') {
+        realtimeService.notifyAiJobFailed(event.jobId, event.userId, (event as any).error || 'Failed');
+      }
+    } catch {
+      // ignore
+    }
+
+    // Collaborative Project Room (if attached)
     if (event.projectId) {
       collaborationManager.broadcast(event.projectId, {
         action: 'AI_JOB_UPDATE' as any,

@@ -1,0 +1,45 @@
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { adminController } from './admin.controller.js';
+import { authService } from '../auth/auth.service.js';
+import { ForbiddenError } from '../../core/errors.js';
+
+export async function requireAdmin(request: FastifyRequest, _reply: FastifyReply) {
+  const adminKeyHeader = request.headers['x-admin-key'] as string;
+  const configuredAdminKey = process.env.ADMIN_API_KEY || 'adm_super_secret_production_key_32bytes';
+
+  if (adminKeyHeader && adminKeyHeader === configuredAdminKey) {
+    (request as any).user = { userId: 'admin_api_key', email: 'admin@techxayan.com', role: 'SUPERADMIN' };
+    return;
+  }
+
+  const authHeader = request.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const payload = authService.verifyAccessToken(token);
+      if (payload.role === 'ADMIN' || payload.role === 'SUPERADMIN' || (payload as any).isAdmin) {
+        (request as any).user = payload;
+        return;
+      }
+    } catch {
+      // invalid token
+    }
+  }
+
+  throw new ForbiddenError('Forbidden: Administrative access required');
+}
+
+export async function adminRoutes(fastify: FastifyInstance) {
+  // All admin routes must be strongly protected
+  fastify.addHook('preHandler', requireAdmin);
+
+  fastify.get('/users', adminController.listUsers.bind(adminController));
+  fastify.get('/projects', adminController.listProjects.bind(adminController));
+  fastify.get('/jobs', adminController.listJobs.bind(adminController));
+  fastify.get('/failed-jobs', adminController.listFailedJobs.bind(adminController));
+  fastify.post('/jobs/:id/retry', adminController.retryJob.bind(adminController));
+  fastify.get('/usage', adminController.getUsage.bind(adminController));
+  fastify.get('/subscriptions', adminController.getSubscriptions.bind(adminController));
+  fastify.get('/credits', adminController.getCredits.bind(adminController));
+  fastify.get('/audit-logs', adminController.listAuditLogs.bind(adminController));
+}

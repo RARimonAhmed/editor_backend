@@ -14,8 +14,8 @@ export interface CreditTransaction {
 }
 
 // In-memory credit store for mock / standalone dev
-const mockCreditBalances = new Map<string, number>();
-const mockCreditLedger: CreditTransaction[] = [];
+export const mockCreditBalances = new Map<string, number>();
+export const mockCreditLedger: CreditTransaction[] = [];
 
 export class CreditsService {
   async getBalance(userId: string): Promise<number> {

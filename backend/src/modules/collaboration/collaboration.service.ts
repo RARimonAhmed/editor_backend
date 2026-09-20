@@ -13,6 +13,7 @@ import { mockProjects } from '../projects/projects.service.js';
 import { db } from '../../database/client.js';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../core/errors.js';
 import { logger } from '../../core/logger.js';
+import { realtimeService } from '../realtime/realtime.service.js';
 
 // In-memory repositories for high-speed lookup and tests
 export const mockCollaborators = new Map<string, ProjectCollaborator>();
@@ -122,6 +123,7 @@ export class CollaborationService {
     };
 
     mockCollaborators.set(collabKey, collaborator);
+    realtimeService.notifyProjectShared(projectId, targetUserId, input.role, requesterUserId);
     logger.info({ projectId, targetUserId, role: input.role }, 'Collaborator added to project');
     return collaborator;
   }

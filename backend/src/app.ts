@@ -34,6 +34,10 @@ import { collaborationRoutes } from './modules/collaboration/collaboration.route
 import { collaborationWsRoutes } from './modules/collaboration/collaboration.ws.js';
 import { mediaProgressWsRoutes } from './modules/media/media-progress.ws.js';
 import { aiJobWsRoutes } from './modules/ai/jobs/ai-job.ws.js';
+import { realtimeWsRoutes } from './modules/realtime/realtime.ws.js';
+import { realtimeRoutes } from './modules/realtime/realtime.routes.js';
+import { adminRoutes } from './modules/admin/admin.routes.js';
+import { metricsService } from './core/metrics.service.js';
 import { registerQueueProcessors } from './services/queue/processors.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -231,10 +235,25 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   );
 
-  // Register WebSocket Collaboration, Media Progress & AI Job Routes
+  app.get(
+    '/metrics',
+    {
+      schema: {
+        description: 'System telemetry, health, queue depths, and performance metrics',
+        tags: ['System'],
+      },
+    },
+    async (_req, reply) => {
+      const metrics = await metricsService.getMetrics();
+      return reply.status(200).send(createSuccessResponse(metrics));
+    }
+  );
+
+  // Register WebSocket Collaboration, Media Progress, AI Job & Unified Realtime Routes
   await app.register(collaborationWsRoutes);
   await app.register(mediaProgressWsRoutes);
   await app.register(aiJobWsRoutes);
+  await app.register(realtimeWsRoutes);
 
   // Register API v1 Routes
   const registerV1Modules = async (v1: FastifyInstance) => {
@@ -248,6 +267,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     await v1.register(aiRoutes, { prefix: '/ai' });
     await v1.register(jobsRoutes, { prefix: '/jobs' });
     await v1.register(webhooksRoutes, { prefix: '/webhooks' });
+    await v1.register(adminRoutes, { prefix: '/admin' });
+    await v1.register(realtimeRoutes);
 
     // Direct /me endpoints
     v1.get('/me', { preHandler: [authenticate] }, authController.getMe.bind(authController));

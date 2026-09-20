@@ -16,7 +16,7 @@ import { NotFoundError, ForbiddenError, ValidationError } from '../../../core/er
 import { logger } from '../../../core/logger.js';
 
 // In-memory job repository for high-performance retrieval and test isolation
-const mockAIJobs = new Map<string, AIJobRecord>();
+export const mockAIJobs = new Map<string, AIJobRecord>();
 // Key: `${userId}:${idempotencyKey}` -> jobId
 const idempotencyKeyMap = new Map<string, string>();
 // Key: `${userId}:${type}:${fingerprint}` -> jobId for active deduplication

@@ -1,17 +1,29 @@
 import { z } from 'zod';
 
-export const canvasSchema = z.object({
-  resolutionWidth: z.number().int().positive().default(1920),
-  resolutionHeight: z.number().int().positive().default(1080),
-  framerate: z.number().positive().default(30.0),
+export const baseCanvasSchema = z.object({
+  resolutionWidth: z.number().int().positive().optional(),
+  resolutionHeight: z.number().int().positive().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  framerate: z.number().positive().optional(),
+  fps: z.number().positive().optional(),
   aspectRatio: z.string().default('16:9'),
   colorSpace: z.string().default('rec709'),
   backgroundColor: z.string().default('#000000'),
 });
 
+export const canvasSchema = baseCanvasSchema.transform((data) => ({
+  resolutionWidth: data.resolutionWidth || data.width || 1920,
+  resolutionHeight: data.resolutionHeight || data.height || 1080,
+  framerate: data.framerate || data.fps || 30.0,
+  aspectRatio: data.aspectRatio,
+  colorSpace: data.colorSpace,
+  backgroundColor: data.backgroundColor,
+}));
+
 export const timelineClipSchema = z.object({
   id: z.string(),
-  name: z.string(),
+  name: z.string().default('Clip'),
   mediaAssetId: z.string().optional(),
   start: z.number().nonnegative(),
   duration: z.number().positive(),
@@ -26,7 +38,7 @@ export const timelineClipSchema = z.object({
 export const timelineTrackSchema = z.object({
   id: z.string(),
   type: z.enum(['video', 'audio', 'text', 'effect']),
-  name: z.string(),
+  name: z.string().default('Track'),
   muted: z.boolean().default(false),
   locked: z.boolean().default(false),
   clips: z.array(timelineClipSchema).default([]),
@@ -85,7 +97,7 @@ export const updateProjectSchema = z.object({
   title: z.string().min(1).optional(),
   description: z.string().max(1000).nullable().optional(),
   status: z.enum(['active', 'archived', 'deleted']).optional(),
-  canvas: canvasSchema.partial().optional(),
+  canvas: baseCanvasSchema.partial().optional(),
   timeline: timelineDataSchema.optional(),
   timelineData: timelineDataSchema.optional(), // backward compatibility
   assets: z.array(projectAssetSchema).optional(),
@@ -103,7 +115,7 @@ export const updateProjectSchema = z.object({
 
 export const autosaveProjectSchema = z.object({
   baseVersion: z.number().int().positive('baseVersion is required for autosave conflict checking'),
-  canvas: canvasSchema.partial().optional(),
+  canvas: baseCanvasSchema.partial().optional(),
   timeline: timelineDataSchema.optional(),
   timelineData: timelineDataSchema.optional(),
   assets: z.array(projectAssetSchema).optional(),

@@ -23,4 +23,51 @@ export async function webhooksRoutes(fastify: FastifyInstance) {
     },
     webhooksController.handleWorkerCallback.bind(webhooksController)
   );
+
+  fastify.post(
+    '/providers/:provider',
+    {
+      schema: {
+        description: 'External provider webhook ingestion with signature verification, idempotency, and retries',
+        tags: ['Webhooks'],
+        params: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string', description: 'Provider identifier (e.g. stripe, mux, replicate, elevenlabs)' },
+          },
+          required: ['provider'],
+        },
+      },
+    },
+    webhooksController.handleProviderIngest.bind(webhooksController)
+  );
+
+  fastify.get(
+    '/dead-letter',
+    {
+      schema: {
+        description: 'Inspect webhooks in Dead-Letter Queue (DLQ)',
+        tags: ['Webhooks'],
+      },
+    },
+    webhooksController.listDeadLetters.bind(webhooksController)
+  );
+
+  fastify.post(
+    '/dead-letter/:id/retry',
+    {
+      schema: {
+        description: 'Retry a failed webhook from Dead-Letter Queue',
+        tags: ['Webhooks'],
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    webhooksController.retryDeadLetter.bind(webhooksController)
+  );
 }

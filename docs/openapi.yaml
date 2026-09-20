@@ -1,0 +1,843 @@
+openapi: 3.1.0
+info:
+  title: TechXayan Creative Video Editor API
+  version: 1.0.0
+  description: |
+    Production-grade enterprise backend API for TechXayan Creative / my_editor (Windows + Android).
+    Provides authentication, project sync with optimistic concurrency control, media asset ingestion
+    and intelligence (vector/semantic search), provider-agnostic AI gateway, asynchronous BullMQ job processing,
+    speech-to-text with word-level timing, natural-language editor command orchestration,
+    realtime collaboration & review timecode commenting, WebSocket/SSE domain event streaming,
+    HMAC-verified webhook ingestion with dead-letter queue, and Prometheus observability metrics.
+servers:
+  - url: http://localhost:4000
+    description: Local Development / Test Server
+  - url: https://api.editor.techxayan.com
+    description: Production Cluster
+paths:
+  /health:
+    get:
+      summary: Liveness health check
+      operationId: checkHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ok" }
+                  timestamp: { type: string, format: date-time }
+                  uptimeSeconds: { type: number }
+
+  /ready:
+    get:
+      summary: Readiness probe
+      operationId: checkReadiness
+      responses:
+        '200':
+          description: Service and downstream dependencies (DB, Redis, S3) are ready
+        '503':
+          description: One or more critical downstream dependencies are unavailable
+
+  /metrics:
+    get:
+      summary: Prometheus observability metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus exposition format text
+          content:
+            text/plain:
+              schema: { type: string }
+
+  # ============================================================================
+  # AUTHENTICATION
+  # ============================================================================
+  /v1/auth/register:
+    post:
+      summary: Register new user account
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                name: { type: string }
+      responses:
+        '201':
+          description: Registered successfully
+        '409':
+          description: Email already registered
+
+  /v1/auth/login:
+    post:
+      summary: Authenticate user credentials
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Logged in successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /v1/auth/refresh:
+    post:
+      summary: Refresh access token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Token refreshed successfully
+
+  /v1/auth/me:
+    get:
+      summary: Get current authenticated user profile
+      operationId: getCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+
+  # ============================================================================
+  # PROJECTS & TIMELINE
+  # ============================================================================
+  /v1/projects:
+    get:
+      summary: List user projects with pagination
+      operationId: listProjects
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated projects list
+    post:
+      summary: Create new project
+      operationId: createProject
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectPayload'
+      responses:
+        '201':
+          description: Project created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+
+  /v1/projects/{id}:
+    get:
+      summary: Get project by ID
+      operationId: getProjectById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Full project with timeline, canvas, and assets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+    put:
+      summary: Update project with optimistic concurrency control
+      operationId: updateProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectPayload'
+      responses:
+        '200':
+          description: Updated project
+        '409':
+          description: Version conflict detected
+
+  /v1/projects/{id}/autosave:
+    post:
+      summary: Non-blocking client background autosave
+      operationId: autosaveProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseVersion]
+              properties:
+                baseVersion: { type: integer }
+                canvas: { type: object }
+                timeline: { type: object }
+                changeSummary: { type: string }
+      responses:
+        '200':
+          description: Autosaved successfully
+        '409':
+          description: Concurrency conflict
+
+  /v1/projects/{id}/comments:
+    get:
+      summary: List review comments
+      operationId: listProjectComments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: List of timecoded comments
+    post:
+      summary: Add timecoded review comment
+      operationId: addProjectComment
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCommentPayload'
+      responses:
+        '201':
+          description: Comment created
+
+  /v1/projects/{id}/comments/{commentId}/resolve:
+    patch:
+      summary: Resolve review comment
+      operationId: resolveComment
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: commentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Comment resolved
+
+  # ============================================================================
+  # MEDIA & INTELLIGENCE
+  # ============================================================================
+  /v1/media/presign:
+    post:
+      summary: Request presigned direct upload URL
+      operationId: presignMediaUpload
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, fileSizeBytes, mimeType]
+              properties:
+                fileName: { type: string }
+                fileSizeBytes: { type: integer }
+                mimeType: { type: string }
+      responses:
+        '200':
+          description: Presigned upload URL with uploadId and asset record
+
+  /v1/media/complete:
+    post:
+      summary: Finalize upload and dispatch async processing job
+      operationId: completeMediaUpload
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mediaId, uploadId]
+              properties:
+                mediaId: { type: string, format: uuid }
+                uploadId: { type: string }
+      responses:
+        '200':
+          description: Enqueued media processing pipeline
+
+  /v1/media/search:
+    post:
+      summary: Semantic, object, speech, and scene search across media assets
+      operationId: searchMedia
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MediaSearchQuery'
+      responses:
+        '200':
+          description: Ranked search results with matched timeline ranges
+
+  # ============================================================================
+  # AI GATEWAY & COMMANDS
+  # ============================================================================
+  /v1/ai/transcribe:
+    post:
+      summary: Speech-to-text transcription with word-level timing
+      operationId: transcribeMedia
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mediaUrl]
+              properties:
+                mediaUrl: { type: string, format: uri }
+                language: { type: string, default: "en" }
+                enableSpeakerDiarization: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Word-level transcript with timestamps and speakers
+
+  /v1/ai/captions:
+    post:
+      summary: Generate timeline Caption objects
+      operationId: generateCaptions
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mediaUrl]
+              properties:
+                mediaUrl: { type: string, format: uri }
+                style: { type: string, default: "dynamic" }
+      responses:
+        '200':
+          description: Segmented timeline caption objects
+
+  /v1/ai/editing-analysis:
+    post:
+      summary: Analyze audio & video for silences, fillers, and highlights
+      operationId: analyzeEditingFeatures
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties:
+                projectId: { type: string, format: uuid }
+                options:
+                  type: object
+                  properties:
+                    detectSilences: { type: boolean, default: true }
+                    minSilenceDuration: { type: number, default: 0.5 }
+      responses:
+        '200':
+          description: Structured editing features
+
+  /v1/ai/commands/interpret:
+    post:
+      summary: Natural-language editor command interpretation
+      operationId: interpretNaturalCommand
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string, maxLength: 10000 }
+                context: { type: object }
+      responses:
+        '200':
+          description: Generated EditorCommandPlan for Flutter ProjectBloc
+
+  /v1/ai/commands/validate:
+    post:
+      summary: Dry-run validate editor commands and generate preview diff
+      operationId: validateCommands
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [commands]
+              properties:
+                commands:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/EditorCommand'
+                timelineDuration: { type: number }
+      responses:
+        '200':
+          description: Validation outcome and execution preview diff
+
+  /v1/ai/short-orchestration:
+    post:
+      summary: Orchestrate long-form video into social short (9:16, 1:1, 4:5)
+      operationId: orchestrateShortVideo
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties:
+                projectId: { type: string, format: uuid }
+                targetDuration: { type: integer, enum: [30, 45, 60], default: 45 }
+                aspectRatio: { type: string, enum: ['9:16', '1:1', '4:5'], default: '9:16' }
+                captionPreset: { type: string, default: 'bold_yellow' }
+                musicPreset: { type: string, default: 'upbeat_ambient' }
+      responses:
+        '200':
+          description: Short orchestration command plan
+
+  /v1/ai/generate/{type}:
+    post:
+      summary: Asynchronous AI asset generation (image, video, music, sfx, voice, script)
+      operationId: generateAsset
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [image, video, music, sfx, voice, script]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string, maxLength: 10000 }
+                projectId: { type: string, format: uuid }
+                parameters: { type: object }
+      responses:
+        '202':
+          description: Generation job queued
+
+  /v1/ai/jobs/{id}:
+    get:
+      summary: Query asynchronous AI job status and progress
+      operationId: getAiJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Job status, progress, input, and output
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiJob'
+
+  /v1/ai/jobs/{id}/cancel:
+    post:
+      summary: Cancel running or queued AI job
+      operationId: cancelAiJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Job cancelled
+
+  # ============================================================================
+  # VIDEO RENDER & EXPORT JOBS
+  # ============================================================================
+  /v1/jobs/render:
+    post:
+      summary: Submit asynchronous video timeline rendering export job
+      operationId: createRenderJob
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties:
+                projectId: { type: string, format: uuid }
+                format: { type: string, enum: [mp4, mov, webm], default: mp4 }
+                resolutionWidth: { type: integer, default: 1920 }
+                resolutionHeight: { type: integer, default: 1080 }
+                framerate: { type: number, default: 30.0 }
+                bitrateKbps: { type: integer }
+      responses:
+        '202':
+          description: Render export job submitted
+
+  # ============================================================================
+  # BILLING & SUBSCRIPTIONS
+  # ============================================================================
+  /v1/billing/plans:
+    get:
+      summary: List available subscription plans
+      operationId: listBillingPlans
+      responses:
+        '200':
+          description: Subscription plans and credit allowances
+
+  /v1/billing/checkout:
+    post:
+      summary: Create Stripe checkout session
+      operationId: createCheckoutSession
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties:
+                planId: { type: string }
+                successUrl: { type: string }
+                cancelUrl: { type: string }
+      responses:
+        '200':
+          description: Checkout session URL
+
+  /v1/billing/credits:
+    get:
+      summary: Get user current credit balance
+      operationId: getCreditBalance
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current balance, tier, and monthly allowance
+
+  # ============================================================================
+  # REALTIME & WEBHOOKS
+  # ============================================================================
+  /v1/events/stream:
+    get:
+      summary: Server-Sent Events (SSE) stream for project, job, and user events
+      operationId: streamRealtimeEvents
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: channels
+          in: query
+          schema: { type: string, example: "project:123,job:456" }
+      responses:
+        '200':
+          description: Event stream (text/event-stream)
+
+  /v1/webhooks/stripe:
+    post:
+      summary: Stripe webhook ingestion with HMAC-SHA256 signature verification
+      operationId: ingestStripeWebhook
+      parameters:
+        - name: stripe-signature
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Webhook received and processed
+        '400':
+          description: Invalid or missing signature
+
+  /v1/webhooks/dead-letter:
+    get:
+      summary: List dead-lettered webhook events
+      operationId: listDeadLetterWebhooks
+      security:
+        - AdminAuth: []
+      responses:
+        '200':
+          description: Failed webhook items for dead-letter analysis
+
+  /v1/webhooks/dead-letter/{id}/retry:
+    post:
+      summary: Manually retry dead-lettered webhook
+      operationId: retryDeadLetterWebhook
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Webhook re-queued
+
+  # ============================================================================
+  # ADMIN & OBSERVABILITY
+  # ============================================================================
+  /v1/admin/users:
+    get:
+      summary: List platform users
+      operationId: adminListUsers
+      security:
+        - AdminAuth: []
+      responses:
+        '200':
+          description: User accounts list
+  /v1/admin/audit-logs:
+    get:
+      summary: View administrative audit trails
+      operationId: adminGetAuditLogs
+      security:
+        - AdminAuth: []
+      responses:
+        '200':
+          description: Immutable security and audit events
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    AdminAuth:
+      type: apiKey
+      in: header
+      name: x-admin-key
+
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+        tokens:
+          type: object
+          properties:
+            accessToken: { type: string }
+            refreshToken: { type: string }
+            expiresInSeconds: { type: integer }
+
+    UserProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string, enum: [USER, ADMIN, SUPERADMIN] }
+        plan: { type: string }
+        creditsBalance: { type: integer }
+
+    CreateProjectPayload:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        canvas:
+          $ref: '#/components/schemas/Canvas'
+
+    UpdateProjectPayload:
+      type: object
+      properties:
+        title: { type: string }
+        description: { type: string }
+        expectedVersion: { type: integer }
+        canvas:
+          $ref: '#/components/schemas/Canvas'
+        timeline: { type: object }
+
+    ProjectResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        version: { type: integer }
+        canvas:
+          $ref: '#/components/schemas/Canvas'
+        timeline: { type: object }
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectAsset'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Canvas:
+      type: object
+      properties:
+        resolutionWidth: { type: integer, default: 1920 }
+        resolutionHeight: { type: integer, default: 1080 }
+        framerate: { type: number, default: 30.0 }
+        aspectRatio: { type: string, default: "16:9" }
+        colorSpace: { type: string, default: "rec709" }
+        backgroundColor: { type: string, default: "#000000" }
+
+    ProjectAsset:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [video, audio, image, font, lut, other] }
+        uri: { type: string }
+        duration: { type: number }
+        thumbnailUrl: { type: string }
+
+    AddCommentPayload:
+      type: object
+      required: [content, timecode]
+      properties:
+        content: { type: string }
+        timecode: { type: number }
+
+    MediaSearchQuery:
+      type: object
+      properties:
+        query: { type: string }
+        types:
+          type: array
+          items: { type: string }
+        durationMin: { type: number }
+        durationMax: { type: number }
+        limit: { type: integer, default: 20 }
+
+    EditorCommand:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum:
+            - DELETE_RANGE
+            - SPLIT_CLIP
+            - TRIM_CLIP
+            - SET_SPEED
+            - ADD_COLOR_PRESET
+            - ADD_CAPTIONS
+            - SET_CANVAS
+            - AUTO_REFRAME
+            - ADD_AUDIO
+            - DUCK_AUDIO
+        trackId: { type: string }
+        clipId: { type: string }
+        timeRange:
+          type: object
+          properties:
+            start: { type: number }
+            end: { type: number }
+        parameters: { type: object }
+
+    AiJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        status: { type: string, enum: [QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED] }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        input: { type: object }
+        output: { type: object }
+        error: { type: string }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }

@@ -1,0 +1,13 @@
+name: client_models
+description: Type-safe Dart models for TechXayan Creative / my_editor Windows and Android applications.
+version: 1.0.0
+homepage: https://editor.techxayan.com
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  meta: ^1.11.0
+
+dev_dependencies:
+  test: ^1.24.0

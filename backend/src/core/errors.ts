@@ -63,3 +63,7 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED', details);
   }
 }
+
+export { AuthenticationError as UnauthorizedError };
+export { RateLimitError as TooManyRequestsError };
+

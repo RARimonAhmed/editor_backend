@@ -12,6 +12,7 @@ import { collaborationService } from '../../collaboration/collaboration.service.
 import { collaborationManager } from '../../collaboration/collaboration.manager.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../../core/errors.js';
 import { logger } from '../../../core/logger.js';
+import { realtimeService } from '../../realtime/realtime.service.js';
 
 // In-memory repositories for high-speed retrieval and unit tests
 export const mockSnapshots = new Map<string, ProjectVersionSnapshot>();
@@ -278,6 +279,7 @@ export class ReviewService {
       senderId: userId,
       data: comment,
     });
+    realtimeService.notifyCommentAdded(projectId, comment);
 
     return comment;
   }

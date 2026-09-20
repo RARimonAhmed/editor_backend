@@ -64,7 +64,7 @@ interface StoredEmailVerification {
 }
 
 // In-memory repositories for local/mock/test execution
-const mockUsers = new Map<string, User>();
+export const mockUsers = new Map<string, User>();
 const mockProfiles = new Map<string, Record<string, any>>();
 const mockSessions = new Map<string, StoredSession>();
 const mockPasswordResets = new Map<string, StoredPasswordReset>();
