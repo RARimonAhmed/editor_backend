@@ -111,17 +111,21 @@ describe('Asynchronous AI Job System Subsystem', () => {
     expect(res.statusCode).toBe(202);
     const jobId = JSON.parse(res.body).data.job.id;
 
-    // Wait for the background worker to execute (our mock worker sleeps ~50ms total)
-    await sleep(150);
-
-    const checkRes = await app.inject({
-      method: 'GET',
-      url: `/v1/ai/jobs/${jobId}`,
-      headers: { authorization: `Bearer ${userToken}` },
-    });
+    // Wait for the background worker to execute
+    let checkRes: any;
+    let job: any;
+    for (let i = 0; i < 30; i++) {
+      await sleep(100);
+      checkRes = await app.inject({
+        method: 'GET',
+        url: `/v1/ai/jobs/${jobId}`,
+        headers: { authorization: `Bearer ${userToken}` },
+      });
+      job = JSON.parse(checkRes.body).data.job;
+      if (job.status === 'COMPLETED') break;
+    }
 
     expect(checkRes.statusCode).toBe(200);
-    const job = JSON.parse(checkRes.body).data.job;
     expect(job.status).toBe('COMPLETED');
     expect(job.progress).toBe(100);
     expect(job.startedAt).toBeDefined();
