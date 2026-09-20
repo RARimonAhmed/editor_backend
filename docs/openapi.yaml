@@ -514,6 +514,86 @@ paths:
         '202':
           description: Generation job queued
 
+  /v1/ai/jobs:
+    post:
+      summary: Submit asynchronous AI job (compatible with Flutter BackendAIProvider and web)
+      operationId: createAiJob
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, example: "auto_caption" }
+                projectId: { type: string }
+                parameters: { type: object }
+                input: { type: object }
+      responses:
+        '201':
+          description: AI job enqueued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiJobResponse'
+
+  /ai/jobs:
+    post:
+      summary: Root alias for submitting AI jobs (unauthenticated local client fallback)
+      operationId: createAiJobRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, example: "auto_caption" }
+                projectId: { type: string }
+                parameters: { type: object }
+                input: { type: object }
+      responses:
+        '201':
+          description: AI job enqueued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiJobResponse'
+
+  /ai/uploads:
+    post:
+      summary: AI asset media upload ticket endpoint for Flutter clients
+      operationId: uploadAiMediaRoot
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              properties:
+                fileName: { type: string }
+                fileSizeBytes: { type: integer }
+                mimeType: { type: string }
+      responses:
+        '200':
+          description: Upload confirmed with ticket and remote URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploadId: { type: string }
+                  uploaded: { type: boolean, example: true }
+                  remoteUrl: { type: string, format: uri }
+
   /v1/ai/jobs/{id}:
     get:
       summary: Query asynchronous AI job status and progress
@@ -524,14 +604,31 @@ paths:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          schema: { type: string }
       responses:
         '200':
           description: Job status, progress, input, and output
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AiJob'
+                $ref: '#/components/schemas/AiJobResponse'
+
+  /ai/jobs/{id}:
+    get:
+      summary: Root alias to query asynchronous AI job status (Flutter BackendAIProvider)
+      operationId: getAiJobRoot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job status, progress, input, and output
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiJobResponse'
 
   /v1/ai/jobs/{id}/cancel:
     post:
@@ -543,7 +640,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          schema: { type: string }
       responses:
         '200':
           description: Job cancelled
@@ -738,6 +835,19 @@ components:
         description: { type: string }
         canvas:
           $ref: '#/components/schemas/Canvas'
+        resolution:
+          type: object
+          description: "Flutter ProjectModel compatible resolution"
+          properties:
+            width: { type: integer, example: 1920 }
+            height: { type: integer, example: 1080 }
+        frameRate: { type: number, example: 30.0 }
+        durationMs: { type: integer, example: 60000 }
+        tracks:
+          type: array
+          description: "Flutter ProjectModel compatible top-level track list"
+          items:
+            $ref: '#/components/schemas/TimelineTrack'
 
     UpdateProjectPayload:
       type: object
@@ -748,6 +858,17 @@ components:
         canvas:
           $ref: '#/components/schemas/Canvas'
         timeline: { type: object }
+        resolution:
+          type: object
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        frameRate: { type: number }
+        durationMs: { type: integer }
+        tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineTrack'
 
     ProjectResponse:
       type: object
@@ -755,13 +876,36 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         version: { type: integer }
+        schemaVersion: { type: integer, example: 1 }
+        resolution:
+          type: object
+          description: "Flutter ProjectModel compatible resolution"
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        frameRate: { type: number, example: 30.0 }
+        durationMs: { type: integer, example: 60000 }
         canvas:
           $ref: '#/components/schemas/Canvas'
         timeline: { type: object }
+        tracks:
+          type: array
+          description: "Flutter ProjectModel compatible tracks with millisecond offsets"
+          items:
+            $ref: '#/components/schemas/TimelineTrack'
         assets:
           type: array
           items:
             $ref: '#/components/schemas/ProjectAsset'
+        markers:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              positionMs: { type: integer }
+              label: { type: string }
+              color: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
@@ -832,7 +976,7 @@ components:
     AiJob:
       type: object
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string }
         type: { type: string }
         status: { type: string, enum: [QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED] }
         progress: { type: integer, minimum: 0, maximum: 100 }
@@ -841,3 +985,43 @@ components:
         error: { type: string }
         createdAt: { type: string, format: date-time }
         completedAt: { type: string, format: date-time }
+
+    AiJobResponse:
+      type: object
+      description: "Dual format response satisfying Flutter BackendAIProvider._parseJob and Web clients"
+      properties:
+        id: { type: string }
+        jobId: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [queued, processing, completed, failed, cancelled] }
+        progress: { type: number, minimum: 0.0, maximum: 1.0 }
+        result: { type: object }
+        error: { type: string }
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            job:
+              $ref: '#/components/schemas/AiJob'
+
+    TimelineTrack:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [video, audio, text, effect, image, overlay] }
+        name: { type: string }
+        isLocked: { type: boolean, default: false }
+        isMuted: { type: boolean, default: false }
+        clips:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              assetId: { type: string }
+              timelineStartMs: { type: integer }
+              durationMs: { type: integer }
+              sourceInPointMs: { type: integer }
+              sourceOutPointMs: { type: integer }
+              speed: { type: number, default: 1.0 }
+              volume: { type: number, default: 1.0 }

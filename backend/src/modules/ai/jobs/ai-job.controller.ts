@@ -11,6 +11,38 @@ import {
 import { createSuccessResponse } from '../../../core/response.js';
 import { AppError } from '../../../core/errors.js';
 
+function formatJobResponse(job: any, extra: Record<string, any> = {}) {
+  const statusLower = job.status === 'RUNNING' ? 'processing' : (job.status ? job.status.toLowerCase() : 'queued');
+  const progressRatio = typeof job.progress === 'number' ? (job.progress > 1 ? job.progress / 100 : job.progress) : 0;
+
+  const flutterFormatted = {
+    id: job.id,
+    jobId: job.id,
+    type: job.type,
+    status: statusLower,
+    progress: progressRatio,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    input: job.input,
+    result: job.output || null,
+    providerKind: 'backend',
+    applied: false,
+    ...extra,
+  };
+
+  return {
+    ...flutterFormatted,
+    success: true,
+    data: {
+      job,
+      ...flutterFormatted,
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
 export class AIJobController {
   /**
    * POST /v1/ai/jobs
@@ -19,6 +51,11 @@ export class AIJobController {
   async createJob(req: FastifyRequest, reply: FastifyReply) {
     const userId = req.user!.userId;
     const body = createAIJobSchema.parse(req.body);
+
+    // Merge parameters into input if provided
+    if (body.parameters && typeof body.parameters === 'object') {
+      body.input = { ...body.parameters, ...body.input };
+    }
 
     // Extract idempotency key from header if not in body
     const headerKey = req.headers['idempotency-key'] as string | undefined;
@@ -34,13 +71,10 @@ export class AIJobController {
     }
 
     return reply.status(statusCode).send(
-      createSuccessResponse(
-        {
-          job,
-          isReplay,
-        },
-        { message: statusCode === 202 ? 'AI job enqueued for asynchronous execution' : 'Idempotent AI job retrieved' }
-      )
+      formatJobResponse(job, {
+        isReplay,
+        message: statusCode === 202 ? 'AI job enqueued for asynchronous execution' : 'Idempotent AI job retrieved',
+      })
     );
   }
 
@@ -54,7 +88,7 @@ export class AIJobController {
 
     const job = await aiJobService.getJob(id, userId);
 
-    return reply.status(200).send(createSuccessResponse({ job }));
+    return reply.status(200).send(formatJobResponse(job));
   }
 
   /**
@@ -68,7 +102,7 @@ export class AIJobController {
     const job = await aiJobService.cancelJob(id, userId);
 
     return reply.status(200).send(
-      createSuccessResponse({ job }, { message: 'AI job successfully cancelled' })
+      formatJobResponse(job, { message: 'AI job successfully cancelled' })
     );
   }
 
@@ -83,7 +117,7 @@ export class AIJobController {
     const job = await aiJobService.retryJob(id, userId);
 
     return reply.status(200).send(
-      createSuccessResponse({ job }, { message: 'AI job successfully re-queued for execution' })
+      formatJobResponse(job, { message: 'AI job successfully re-queued for execution' })
     );
   }
 

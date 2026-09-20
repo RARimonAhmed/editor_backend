@@ -72,6 +72,51 @@ export interface ProjectDocument {
   aspectRatio: string;
   timelineData: TimelineData;
   thumbnailUrl: string | null;
+
+  // Flutter DTO compatibility fields
+  schemaVersion?: number;
+  resolution?: { width: number; height: number };
+  frameRate?: number;
+  durationMs?: number;
+  tracks?: any[];
+  markers?: any[];
+}
+
+export function enrichProjectForFlutter(doc: ProjectDocument): ProjectDocument {
+  const tracks = (doc.timeline?.tracks || []).map((t: any) => ({
+    ...t,
+    isLocked: t.locked ?? t.isLocked ?? false,
+    isMuted: t.muted ?? t.isMuted ?? false,
+    clips: (t.clips || []).map((c: any) => ({
+      ...c,
+      timelineStartMs: Math.round((c.start || 0) * 1000),
+      durationMs: Math.round((c.duration || 0) * 1000),
+      sourceInPointMs: Math.round((c.sourceStart || 0) * 1000),
+      assetId: c.mediaAssetId || c.assetId || c.id,
+      isLocked: c.isLocked ?? false,
+      isMuted: c.isMuted ?? false,
+    })),
+  }));
+
+  const markers = (doc.timeline?.markers || []).map((m: any) => ({
+    ...m,
+    positionMs: Math.round((m.time || 0) * 1000),
+  }));
+
+  const width = doc.canvas?.resolutionWidth || doc.resolutionWidth || 1920;
+  const height = doc.canvas?.resolutionHeight || doc.resolutionHeight || 1080;
+  const frameRate = doc.canvas?.framerate || doc.framerate || 30;
+  const durationMs = Math.round((doc.timeline?.duration || 0) * 1000);
+
+  return {
+    ...doc,
+    schemaVersion: (doc as any).schemaVersion || 1,
+    resolution: { width, height },
+    frameRate,
+    durationMs,
+    tracks,
+    markers,
+  };
 }
 
 // In-memory repositories for test/mock resilience
@@ -229,7 +274,7 @@ export class ProjectsService {
       // fallback
     }
 
-    return project;
+    return enrichProjectForFlutter(project);
   }
 
   // ============================================================================
@@ -245,7 +290,7 @@ export class ProjectsService {
       throw new ForbiddenError('You do not have permission to access this project');
     }
 
-    return project;
+    return enrichProjectForFlutter(project);
   }
 
   // ============================================================================
@@ -384,7 +429,7 @@ export class ProjectsService {
       // fallback
     }
 
-    return updatedProject;
+    return enrichProjectForFlutter(updatedProject);
   }
 
   // ============================================================================
@@ -463,7 +508,7 @@ export class ProjectsService {
     };
 
     mockProjects.set(id, updatedProject);
-    return updatedProject;
+    return enrichProjectForFlutter(updatedProject);
   }
 
   // ============================================================================
@@ -591,7 +636,7 @@ export class ProjectsService {
     const paginated = userProjects.slice(query.offset, query.offset + query.limit);
 
     return {
-      projects: paginated,
+      projects: paginated.map(enrichProjectForFlutter),
       total,
     };
   }

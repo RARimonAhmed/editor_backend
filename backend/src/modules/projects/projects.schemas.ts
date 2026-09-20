@@ -21,35 +21,79 @@ export const canvasSchema = baseCanvasSchema.transform((data) => ({
   backgroundColor: data.backgroundColor,
 }));
 
-export const timelineClipSchema = z.object({
-  id: z.string(),
-  name: z.string().default('Clip'),
-  mediaAssetId: z.string().optional(),
-  start: z.number().nonnegative(),
-  duration: z.number().positive(),
-  sourceStart: z.number().nonnegative().default(0),
-  speed: z.number().positive().default(1.0),
-  volume: z.number().min(0).max(2).default(1.0),
-  style: z.record(z.unknown()).optional(),
-  transform: z.record(z.unknown()).optional(),
-  transitions: z.record(z.unknown()).optional(),
-});
+export const timelineClipSchema = z.preprocess(
+  (val: any) => {
+    if (!val || typeof val !== 'object') return val;
+    const start = val.start ?? (val.timelineStartMs != null ? val.timelineStartMs / 1000 : undefined);
+    const duration = val.duration ?? (val.durationMs != null ? val.durationMs / 1000 : undefined);
+    const sourceStart = val.sourceStart ?? (val.sourceInPointMs != null ? val.sourceInPointMs / 1000 : 0);
+    const mediaAssetId = val.mediaAssetId ?? val.assetId;
+    return {
+      ...val,
+      start: start !== undefined ? start : 0,
+      duration: duration !== undefined ? duration : 1,
+      sourceStart: sourceStart !== undefined ? sourceStart : 0,
+      mediaAssetId,
+    };
+  },
+  z
+    .object({
+      id: z.string(),
+      name: z.string().default('Clip'),
+      mediaAssetId: z.string().optional(),
+      start: z.number().nonnegative(),
+      duration: z.number().positive(),
+      sourceStart: z.number().nonnegative().default(0),
+      speed: z.number().positive().default(1.0),
+      volume: z.number().min(0).max(4).default(1.0),
+      style: z.record(z.unknown()).optional(),
+      transform: z.record(z.unknown()).optional(),
+      transitions: z.record(z.unknown()).optional(),
+    })
+    .passthrough()
+);
 
-export const timelineTrackSchema = z.object({
-  id: z.string(),
-  type: z.enum(['video', 'audio', 'text', 'effect']),
-  name: z.string().default('Track'),
-  muted: z.boolean().default(false),
-  locked: z.boolean().default(false),
-  clips: z.array(timelineClipSchema).default([]),
-});
+export const timelineTrackSchema = z.preprocess(
+  (val: any) => {
+    if (!val || typeof val !== 'object') return val;
+    return {
+      ...val,
+      locked: val.locked ?? val.isLocked ?? false,
+      muted: val.muted ?? val.isMuted ?? false,
+    };
+  },
+  z
+    .object({
+      id: z.string(),
+      type: z.enum(['video', 'audio', 'text', 'effect', 'image', 'overlay']),
+      name: z.string().default('Track'),
+      muted: z.boolean().default(false),
+      locked: z.boolean().default(false),
+      clips: z.array(timelineClipSchema).default([]),
+    })
+    .passthrough()
+);
 
-export const timelineMarkerSchema = z.object({
-  id: z.string().optional(),
-  time: z.number().nonnegative(),
-  label: z.string(),
-  color: z.string().optional(),
-});
+export const timelineMarkerSchema = z.preprocess(
+  (val: any) => {
+    if (!val || typeof val !== 'object') return val;
+    const time = val.time ?? (val.positionMs != null ? val.positionMs / 1000 : 0);
+    return {
+      ...val,
+      time,
+      color: val.color ?? (val.colorValue != null ? `#${(val.colorValue & 0x00ffffff).toString(16).padStart(6, '0')}` : undefined),
+    };
+  },
+  z
+    .object({
+      id: z.string().optional(),
+      time: z.number().nonnegative(),
+      label: z.string().default(''),
+      color: z.string().optional(),
+      colorValue: z.number().optional(),
+    })
+    .passthrough()
+);
 
 export const timelineDataSchema = z.object({
   duration: z.number().nonnegative().default(0),
@@ -58,16 +102,32 @@ export const timelineDataSchema = z.object({
   markers: z.array(timelineMarkerSchema).default([]),
 });
 
-export const projectAssetSchema = z.object({
-  id: z.string(),
-  mediaAssetId: z.string().optional(),
-  name: z.string(),
-  type: z.enum(['video', 'audio', 'image', 'font', 'lut', 'other']).default('video'),
-  uri: z.string().optional(),
-  sizeBytes: z.number().optional(),
-  duration: z.number().optional(),
-  thumbnailUrl: z.string().optional(),
-});
+export const projectAssetSchema = z.preprocess(
+  (val: any) => {
+    if (!val || typeof val !== 'object') return val;
+    const mediaAssetId = val.mediaAssetId ?? val.id;
+    const uri = val.uri ?? val.source?.pathOrUri;
+    const sizeBytes = val.sizeBytes ?? val.fileSizeBytes;
+    return {
+      ...val,
+      mediaAssetId,
+      uri,
+      sizeBytes,
+    };
+  },
+  z
+    .object({
+      id: z.string(),
+      mediaAssetId: z.string().optional(),
+      name: z.string(),
+      type: z.enum(['video', 'audio', 'image', 'font', 'lut', 'other']).default('video'),
+      uri: z.string().optional(),
+      sizeBytes: z.number().optional(),
+      duration: z.number().optional(),
+      thumbnailUrl: z.string().optional(),
+    })
+    .passthrough()
+);
 
 export const projectSettingsSchema = z.object({
   autoSaveIntervalSeconds: z.number().int().positive().default(30),
@@ -78,58 +138,105 @@ export const projectSettingsSchema = z.object({
   exportSettings: z.record(z.unknown()).optional(),
 });
 
-export const createProjectSchema = z.object({
-  title: z.string().min(1, 'Project title is required').default('Untitled Project'),
-  description: z.string().max(1000).optional(),
-  canvas: canvasSchema.optional(),
-  timeline: timelineDataSchema.optional(),
-  timelineData: timelineDataSchema.optional(), // backward compatibility
-  assets: z.array(projectAssetSchema).default([]),
-  settings: projectSettingsSchema.optional(),
-  // Flat canvas helpers for backward compatibility
-  resolutionWidth: z.number().int().positive().optional(),
-  resolutionHeight: z.number().int().positive().optional(),
-  framerate: z.number().positive().optional(),
-  aspectRatio: z.string().optional(),
-});
+function preprocessProjectInput(val: any) {
+  if (!val || typeof val !== 'object') return val;
+  const data = { ...val };
 
-export const updateProjectSchema = z.object({
-  title: z.string().min(1).optional(),
-  description: z.string().max(1000).nullable().optional(),
-  status: z.enum(['active', 'archived', 'deleted']).optional(),
-  canvas: baseCanvasSchema.partial().optional(),
-  timeline: timelineDataSchema.optional(),
-  timelineData: timelineDataSchema.optional(), // backward compatibility
-  assets: z.array(projectAssetSchema).optional(),
-  settings: projectSettingsSchema.partial().optional(),
-  thumbnailUrl: z.string().nullable().optional(),
-  // Flat canvas helpers for backward compatibility
-  resolutionWidth: z.number().int().positive().optional(),
-  resolutionHeight: z.number().int().positive().optional(),
-  framerate: z.number().positive().optional(),
-  aspectRatio: z.string().optional(),
-  // Optimistic Concurrency Control
-  expectedVersion: z.number().int().positive().optional(),
-  baseVersion: z.number().int().positive().optional(),
-});
+  // 1. Flutter Canvas Resolution format: { resolution: { width, height } }
+  if (data.resolution && typeof data.resolution === 'object') {
+    data.resolutionWidth = data.resolutionWidth ?? data.resolution.width;
+    data.resolutionHeight = data.resolutionHeight ?? data.resolution.height;
+  }
+  if (data.frameRate != null && data.framerate == null) {
+    data.framerate = data.frameRate;
+  }
 
-export const autosaveProjectSchema = z.object({
-  baseVersion: z.number().int().positive('baseVersion is required for autosave conflict checking'),
-  canvas: baseCanvasSchema.partial().optional(),
-  timeline: timelineDataSchema.optional(),
-  timelineData: timelineDataSchema.optional(),
-  assets: z.array(projectAssetSchema).optional(),
-  settings: projectSettingsSchema.partial().optional(),
-  changeSummary: z.string().optional(),
-  device: z
+  // 2. Flutter top-level tracks array: auto-wrap into timeline if timeline is omitted
+  if (Array.isArray(data.tracks) && !data.timeline && !data.timelineData) {
+    const durationSeconds =
+      data.durationMs != null
+        ? data.durationMs / 1000
+        : typeof data.duration === 'number'
+          ? data.duration
+          : 0;
+    data.timeline = {
+      duration: durationSeconds,
+      framerate: data.framerate ?? 30,
+      tracks: data.tracks,
+      markers: Array.isArray(data.markers) ? data.markers : [],
+    };
+  }
+
+  return data;
+}
+
+export const createProjectSchema = z.preprocess(
+  preprocessProjectInput,
+  z
     .object({
-      deviceFingerprint: z.string().optional(),
-      deviceName: z.string().optional(),
-      deviceType: z.string().optional(),
-      appVersion: z.string().optional(),
+      title: z.string().min(1, 'Project title is required').default('Untitled Project'),
+      description: z.string().max(1000).optional(),
+      canvas: canvasSchema.optional(),
+      timeline: timelineDataSchema.optional(),
+      timelineData: timelineDataSchema.optional(), // backward compatibility
+      assets: z.array(projectAssetSchema).default([]),
+      settings: projectSettingsSchema.optional(),
+      // Flat canvas helpers for backward compatibility
+      resolutionWidth: z.number().int().positive().optional(),
+      resolutionHeight: z.number().int().positive().optional(),
+      framerate: z.number().positive().optional(),
+      aspectRatio: z.string().optional(),
     })
-    .optional(),
-});
+    .passthrough()
+);
+
+export const updateProjectSchema = z.preprocess(
+  preprocessProjectInput,
+  z
+    .object({
+      title: z.string().min(1).optional(),
+      description: z.string().max(1000).nullable().optional(),
+      status: z.enum(['active', 'archived', 'deleted']).optional(),
+      canvas: baseCanvasSchema.partial().optional(),
+      timeline: timelineDataSchema.optional(),
+      timelineData: timelineDataSchema.optional(), // backward compatibility
+      assets: z.array(projectAssetSchema).optional(),
+      settings: projectSettingsSchema.partial().optional(),
+      thumbnailUrl: z.string().nullable().optional(),
+      // Flat canvas helpers for backward compatibility
+      resolutionWidth: z.number().int().positive().optional(),
+      resolutionHeight: z.number().int().positive().optional(),
+      framerate: z.number().positive().optional(),
+      aspectRatio: z.string().optional(),
+      // Optimistic Concurrency Control
+      expectedVersion: z.number().int().positive().optional(),
+      baseVersion: z.number().int().positive().optional(),
+    })
+    .passthrough()
+);
+
+export const autosaveProjectSchema = z.preprocess(
+  preprocessProjectInput,
+  z
+    .object({
+      baseVersion: z.number().int().positive('baseVersion is required for autosave conflict checking'),
+      canvas: baseCanvasSchema.partial().optional(),
+      timeline: timelineDataSchema.optional(),
+      timelineData: timelineDataSchema.optional(),
+      assets: z.array(projectAssetSchema).optional(),
+      settings: projectSettingsSchema.partial().optional(),
+      changeSummary: z.string().optional(),
+      device: z
+        .object({
+          deviceFingerprint: z.string().optional(),
+          deviceName: z.string().optional(),
+          deviceType: z.string().optional(),
+          appVersion: z.string().optional(),
+        })
+        .optional(),
+    })
+    .passthrough()
+);
 
 export const duplicateProjectSchema = z.object({
   newTitle: z.string().min(1).optional(),

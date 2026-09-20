@@ -280,5 +280,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerV1Modules, { prefix: '/api/v1' });
   await app.register(registerV1Modules, { prefix: '/v1' });
 
+  // Direct root aliases for Flutter clients configured without /v1 base URL prefix
+  await app.register(aiRoutes, { prefix: '/ai' });
+  await app.register(projectsRoutes, { prefix: '/projects' });
+  await app.register(authRoutes, { prefix: '/auth' });
+
   return app;
 }

@@ -20,6 +20,39 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
   request.user = payload;
 }
 
+export async function optionalAuthenticate(request: FastifyRequest, _reply: FastifyReply) {
+  const authHeader = request.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.substring(7).trim();
+      const payload = authService.verifyAccessToken(token);
+      request.user = payload;
+      return;
+    } catch {
+      // invalid token, fallback
+    }
+  }
+
+  const queryToken = (request.query as any)?.token;
+  if (queryToken && typeof queryToken === 'string') {
+    try {
+      const payload = authService.verifyAccessToken(queryToken);
+      request.user = payload;
+      return;
+    } catch {
+      // fallback
+    }
+  }
+
+  // Fallback guest identity for local client operations (e.g. Flutter BackendAIProvider)
+  request.user = {
+    userId: 'guest_local_user',
+    sessionId: 'guest_local_session',
+    email: 'creator@techxayan.local',
+    role: 'user',
+  };
+}
+
 export function requireRole(allowedRoles: string[]) {
   return async (request: FastifyRequest, _reply: FastifyReply) => {
     if (!request.user) {

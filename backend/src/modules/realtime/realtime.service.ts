@@ -163,6 +163,13 @@ export class RealtimeService {
     return envelope;
   }
 
+  /**
+   * Broadcast an envelope to a specific channel (alias for publish)
+   */
+  broadcast<T>(channel: string, eventType: RealtimeEventType, payload: T): RealtimeEnvelope<T> {
+    return this.publish(eventType, channel, payload);
+  }
+
   // --------------------------------------------------------------------------
   // HIGH-LEVEL DOMAIN EVENT HELPERS
   // --------------------------------------------------------------------------
