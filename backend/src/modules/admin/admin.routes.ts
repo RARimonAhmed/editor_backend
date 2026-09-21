@@ -64,10 +64,22 @@ export async function adminRoutes(fastify: FastifyInstance) {
     protectedAdmin.delete('/media/:id', adminController.deleteMedia.bind(adminController));
     protectedAdmin.post('/media/:id/cleanup-orphaned', adminController.cleanupOrphanedMedia.bind(adminController));
     protectedAdmin.get('/comments', adminController.listComments.bind(adminController));
+    
+    // Comprehensive Job Monitoring Center
     protectedAdmin.get('/jobs', adminController.listJobs.bind(adminController));
-    protectedAdmin.get('/ai/jobs', adminController.listAIJobs.bind(adminController));
-    protectedAdmin.get('/failed-jobs', adminController.listFailedJobs.bind(adminController));
+    protectedAdmin.get('/jobs/metrics', adminController.getJobMetrics.bind(adminController));
+    protectedAdmin.get('/jobs/:id', adminController.getJobDetails.bind(adminController));
+    protectedAdmin.post('/jobs/:id/cancel', adminController.cancelJob.bind(adminController));
     protectedAdmin.post('/jobs/:id/retry', adminController.retryJob.bind(adminController));
+    protectedAdmin.get('/failed-jobs', adminController.listFailedJobs.bind(adminController));
+
+    // AI Job Intelligence Center
+    protectedAdmin.get('/ai/jobs', adminController.listAIJobs.bind(adminController));
+    protectedAdmin.get('/ai/jobs/:id', adminController.getAIJobDetails.bind(adminController));
+
+    // Cloud Render & Export Monitoring Center
+    protectedAdmin.get('/render/jobs', adminController.listRenderJobs.bind(adminController));
+    protectedAdmin.get('/render/jobs/:id', adminController.getRenderJobDetails.bind(adminController));
 
     // Telemetry & Billing
     protectedAdmin.get('/usage', adminController.getUsage.bind(adminController));

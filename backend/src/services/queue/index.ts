@@ -45,6 +45,7 @@ export interface IJobQueue {
   retryJob(id: string): Promise<Job | null>;
   retryDeadLetterJob(id: string): Promise<Job | null>;
   getDeadLetterJobs(): Promise<Job[]>;
+  getAllJobs(): Promise<Job[]>;
   updateProgress(id: string, progress: number, currentStep?: string, extra?: Record<string, any>): Promise<void>;
   recoverStalledJobs(type?: string): Promise<number>;
   restartWorker<T, R>(type: string, newProcessor?: JobProcessor<T, R>): Promise<void>;
@@ -170,6 +171,10 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
 
   async getDeadLetterJobs(): Promise<Job[]> {
     return Array.from(this.deadLetterJobs.values());
+  }
+
+  async getAllJobs(): Promise<Job[]> {
+    return Array.from(this.jobs.values());
   }
 
   async recoverStalledJobs(type?: string): Promise<number> {

@@ -14,10 +14,23 @@ import {
   AdminCommentView,
   AdminAuditLogEntry,
   AdminJobView,
-  AdminAIJobView,
+  AdminJobStatus,
+  AdminJobQueryParams,
+  AdminJobMetrics,
+  AdminJobDetailView,
+  AdminAIJobDetailView,
+  AdminRenderJobDetailView,
   AdminSubscriptionView,
   AdminCreditTransactionView,
 } from '../types/admin';
+
+export interface PaginatedJobsResponse {
+  jobs: AdminJobView[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -335,19 +348,122 @@ class AdminApiClient {
     });
   }
 
-  // Jobs
-  async getJobs(): Promise<AdminJobView[]> {
-    const res = await this.request<any>('/admin/jobs');
-    return Array.isArray(res) ? res : (res.jobs || []);
+  // Jobs Monitoring Center
+  async getJobs(params?: AdminJobQueryParams): Promise<PaginatedJobsResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.status && params.status !== 'all') searchParams.set('status', params.status);
+    if (params?.type && params.type !== 'all') searchParams.set('type', params.type);
+    if (params?.owner && params.owner !== 'all') searchParams.set('owner', params.owner);
+    if (params?.project && params.project !== 'all') searchParams.set('project', params.project);
+    if (params?.createdFrom) searchParams.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) searchParams.set('createdTo', params.createdTo);
+    if (params?.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params?.sortOrder) searchParams.set('sortOrder', params.sortOrder);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.pageSize) searchParams.set('pageSize', params.pageSize.toString());
+
+    const qs = searchParams.toString();
+    const res = await this.request<any>(`/admin/jobs${qs ? `?${qs}` : ''}`);
+    if (res && res.jobs) {
+      return res as PaginatedJobsResponse;
+    }
+    const jobsArray: AdminJobView[] = Array.isArray(res) ? res : [];
+    return {
+      jobs: jobsArray,
+      total: jobsArray.length,
+      page: 1,
+      pageSize: jobsArray.length || 50,
+      totalPages: 1,
+    };
   }
 
-  async getAIJobs(): Promise<AdminAIJobView[]> {
-    return this.request<AdminAIJobView[]>('/admin/ai/jobs');
+  async getJobDetails(jobId: string): Promise<AdminJobDetailView> {
+    return this.request<AdminJobDetailView>(`/admin/jobs/${jobId}`);
   }
 
-  async getRenderJobs(): Promise<AdminJobView[]> {
-    const res = await this.request<any>('/admin/jobs?type=render');
-    return Array.isArray(res) ? res : (res.jobs || []);
+  async getJobMetrics(): Promise<AdminJobMetrics> {
+    return this.request<AdminJobMetrics>('/admin/jobs/metrics');
+  }
+
+  async cancelJob(jobId: string): Promise<AdminJobView> {
+    return this.request<AdminJobView>(`/admin/jobs/${jobId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async retryJob(jobId: string): Promise<AdminJobView> {
+    return this.request<AdminJobView>(`/admin/jobs/${jobId}/retry`, {
+      method: 'POST',
+    });
+  }
+
+  // AI Job Intelligence Center
+  async getAIJobs(params?: AdminJobQueryParams): Promise<PaginatedJobsResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.status && params.status !== 'all') searchParams.set('status', params.status);
+    if (params?.type && params.type !== 'all') searchParams.set('type', params.type);
+    if (params?.owner && params.owner !== 'all') searchParams.set('owner', params.owner);
+    if (params?.project && params.project !== 'all') searchParams.set('project', params.project);
+    if (params?.createdFrom) searchParams.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) searchParams.set('createdTo', params.createdTo);
+    if (params?.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params?.sortOrder) searchParams.set('sortOrder', params.sortOrder);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.pageSize) searchParams.set('pageSize', params.pageSize.toString());
+
+    const qs = searchParams.toString();
+    const res = await this.request<any>(`/admin/ai/jobs${qs ? `?${qs}` : ''}`);
+    if (res && res.jobs) {
+      return res as PaginatedJobsResponse;
+    }
+    const jobsArray: AdminJobView[] = Array.isArray(res) ? res : [];
+    return {
+      jobs: jobsArray,
+      total: jobsArray.length,
+      page: 1,
+      pageSize: jobsArray.length || 50,
+      totalPages: 1,
+    };
+  }
+
+  async getAIJobDetails(jobId: string): Promise<AdminAIJobDetailView> {
+    return this.request<AdminAIJobDetailView>(`/admin/ai/jobs/${jobId}`);
+  }
+
+  // Cloud Render & Export Monitoring Center
+  async getRenderJobs(params?: AdminJobQueryParams): Promise<PaginatedJobsResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.status && params.status !== 'all') searchParams.set('status', params.status);
+    if (params?.type && params.type !== 'all') searchParams.set('type', params.type);
+    if (params?.owner && params.owner !== 'all') searchParams.set('owner', params.owner);
+    if (params?.project && params.project !== 'all') searchParams.set('project', params.project);
+    if (params?.createdFrom) searchParams.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) searchParams.set('createdTo', params.createdTo);
+    if (params?.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params?.sortOrder) searchParams.set('sortOrder', params.sortOrder);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.pageSize) searchParams.set('pageSize', params.pageSize.toString());
+
+    const qs = searchParams.toString();
+    const res = await this.request<any>(`/admin/render/jobs${qs ? `?${qs}` : ''}`);
+    if (res && res.jobs) {
+      return res as PaginatedJobsResponse;
+    }
+    const jobsArray: AdminJobView[] = Array.isArray(res) ? res : [];
+    return {
+      jobs: jobsArray,
+      total: jobsArray.length,
+      page: 1,
+      pageSize: jobsArray.length || 50,
+      totalPages: 1,
+    };
+  }
+
+  async getRenderJobDetails(jobId: string): Promise<AdminRenderJobDetailView> {
+    return this.request<AdminRenderJobDetailView>(`/admin/render/jobs/${jobId}`);
   }
 
   // Credits & Billing

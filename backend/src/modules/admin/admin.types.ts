@@ -359,3 +359,167 @@ export interface AdminCommentView {
   resolved: boolean;
   createdAt: string;
 }
+
+export type AdminJobStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'RETRYING';
+
+export interface AdminJobView {
+  id: string;
+  type: string;
+  ownerId: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  projectId?: string;
+  projectTitle?: string;
+  status: AdminJobStatus;
+  progress: number;
+  worker: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationSeconds?: number;
+  retryCount: number;
+  error?: string;
+  result?: any;
+  payload?: any;
+}
+
+export interface AdminJobQueryParams {
+  search?: string;
+  status?: string;
+  type?: string;
+  owner?: string;
+  project?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  sortBy?: 'created' | 'createdAt' | 'started' | 'startedAt' | 'duration' | 'progress' | 'type';
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminJobDetailView {
+  job: AdminJobView;
+  logs: Array<{
+    timestamp: string;
+    level: 'info' | 'warn' | 'error' | 'debug';
+    message: string;
+    step?: string;
+  }>;
+  workerNode?: {
+    id: string;
+    ip?: string;
+    concurrency?: number;
+    memoryUsageMb?: number;
+  };
+  errorDetails?: {
+    message: string;
+    stackTrace?: string;
+    code?: string;
+    occurredAt?: string;
+  };
+  steps?: Array<{
+    name: string;
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    durationMs?: number;
+  }>;
+  auditActivity: AdminAuditLogEntry[];
+}
+
+export interface AdminAIJobDetailView {
+  id: string;
+  job: AdminJobView;
+  provider: string;
+  model: string;
+  jobType: string;
+  input: {
+    prompt?: string;
+    parameters?: Record<string, any>;
+    sourceFileKey?: string;
+    mimeType?: string;
+  };
+  outputReference?: {
+    text?: string;
+    fileKey?: string;
+    downloadUrl?: string;
+    mimeType?: string;
+    artifacts?: any[];
+  };
+  tokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  estimatedCostUsd: number;
+  actualCostCredits: number;
+  durationMs?: number;
+  error?: string;
+  retryHistory: Array<{
+    attemptNumber: number;
+    timestamp: string;
+    error?: string;
+    worker?: string;
+  }>;
+  auditActivity: AdminAuditLogEntry[];
+}
+
+export interface AdminRenderJobDetailView {
+  id: string;
+  job: AdminJobView;
+  projectId: string;
+  projectTitle: string;
+  canvas: {
+    resolutionWidth: number;
+    resolutionHeight: number;
+    framerate: number;
+    aspectRatio: string;
+  };
+  resolution: string;
+  fps: number;
+  codec: string;
+  exportSettings: {
+    format: string;
+    quality: string;
+    videoBitrateKbps?: number;
+    audioBitrateKbps?: number;
+    audioCodec?: string;
+    preset?: string;
+  };
+  durationSeconds: number;
+  worker: {
+    id: string;
+    node: string;
+    processId?: number;
+  };
+  outputObject?: {
+    fileKey: string;
+    bucket: string;
+    downloadUrl?: string;
+    fileSizeBytes?: number;
+  };
+  progress: number;
+  framesRendered?: number;
+  totalFrames?: number;
+  error?: string;
+  auditActivity: AdminAuditLogEntry[];
+}
+
+export interface AdminJobMetrics {
+  totalJobs: number;
+  runningJobs: number;
+  queuedJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  cancelledJobs: number;
+  retryingJobs: number;
+  failureRatePercentage: number;
+  averageDurationSeconds: number;
+  queueDepth: number;
+}

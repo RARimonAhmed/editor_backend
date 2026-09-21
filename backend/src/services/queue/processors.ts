@@ -66,6 +66,96 @@ export function registerQueueProcessors() {
     return aiJobWorker.processJob(job);
   });
 
+  // Hook queue events to realtime admin broadcast streams
+  jobQueue.on('started', (j: Job) => {
+    const targetChannel = j.type === 'render_export' ? 'admin:render' : j.type.startsWith('ai_') ? 'admin:ai' : 'admin:jobs';
+    realtimeService.notifyAdminJobEvent(
+      'job_started',
+      {
+        id: j.id,
+        type: j.type,
+        status: 'RUNNING',
+        progress: j.progress || 0,
+        startedAt: j.startedAt?.toISOString() || new Date().toISOString(),
+      },
+      targetChannel
+    );
+  });
+
+  jobQueue.on('progress', (j: Job) => {
+    const targetChannel = j.type === 'render_export' ? 'admin:render' : j.type.startsWith('ai_') ? 'admin:ai' : 'admin:jobs';
+    realtimeService.notifyAdminJobEvent(
+      'job_progress',
+      {
+        id: j.id,
+        type: j.type,
+        status: 'RUNNING',
+        progress: j.progress,
+        currentStep: j.currentStep,
+      },
+      targetChannel
+    );
+  });
+
+  jobQueue.on('completed', (j: Job) => {
+    const targetChannel = j.type === 'render_export' ? 'admin:render' : j.type.startsWith('ai_') ? 'admin:ai' : 'admin:jobs';
+    realtimeService.notifyAdminJobEvent(
+      'job_completed',
+      {
+        id: j.id,
+        type: j.type,
+        status: 'COMPLETED',
+        progress: 100,
+        completedAt: j.completedAt?.toISOString() || new Date().toISOString(),
+        result: j.result,
+      },
+      targetChannel
+    );
+  });
+
+  jobQueue.on('failed', (j: Job) => {
+    const targetChannel = j.type === 'render_export' ? 'admin:render' : j.type.startsWith('ai_') ? 'admin:ai' : 'admin:jobs';
+    realtimeService.notifyAdminJobEvent(
+      'job_failed',
+      {
+        id: j.id,
+        type: j.type,
+        status: 'FAILED',
+        error: j.error,
+        attempts: j.attempts,
+      },
+      targetChannel
+    );
+  });
+
+  jobQueue.on('cancelled', (j: Job) => {
+    const targetChannel = j.type === 'render_export' ? 'admin:render' : j.type.startsWith('ai_') ? 'admin:ai' : 'admin:jobs';
+    realtimeService.notifyAdminJobEvent(
+      'job_cancelled',
+      {
+        id: j.id,
+        type: j.type,
+        status: 'CANCELLED',
+        cancelledAt: j.cancelledAt?.toISOString() || new Date().toISOString(),
+      },
+      targetChannel
+    );
+  });
+
+  jobQueue.on('retry', (j: Job) => {
+    const targetChannel = j.type === 'render_export' ? 'admin:render' : j.type.startsWith('ai_') ? 'admin:ai' : 'admin:jobs';
+    realtimeService.notifyAdminJobEvent(
+      'job_retry',
+      {
+        id: j.id,
+        type: j.type,
+        status: 'RETRYING',
+        attempts: j.attempts,
+      },
+      targetChannel
+    );
+  });
+
   logger.info('Registered all background job queue processors (media_processing, render_export, ai_transcribe, ai_job)');
 }
 

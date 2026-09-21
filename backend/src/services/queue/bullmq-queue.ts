@@ -53,6 +53,7 @@ export class BullMQJobQueue extends EventEmitter implements IJobQueue {
       this.fallbackActive = true;
       this.memoryFallback = new MemoryJobQueue();
       // Forward events
+      this.memoryFallback.on('started', (j) => this.emit('started', j));
       this.memoryFallback.on('progress', (j) => this.emit('progress', j));
       this.memoryFallback.on('completed', (j) => this.emit('completed', j));
       this.memoryFallback.on('failed', (j) => this.emit('failed', j));
@@ -241,6 +242,13 @@ export class BullMQJobQueue extends EventEmitter implements IJobQueue {
       return this.memoryFallback.getDeadLetterJobs();
     }
     return Array.from(this.trackedJobs.values()).filter((j) => j.isDeadLetter);
+  }
+
+  async getAllJobs(): Promise<Job[]> {
+    if (this.fallbackActive && this.memoryFallback) {
+      return this.memoryFallback.getAllJobs();
+    }
+    return Array.from(this.trackedJobs.values());
   }
 
   async recoverStalledJobs(type?: string): Promise<number> {

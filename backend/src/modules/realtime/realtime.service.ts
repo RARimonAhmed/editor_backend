@@ -5,6 +5,7 @@ import { mockAIJobs } from '../ai/jobs/ai-job.service.js';
 import { mockJobs } from '../jobs/jobs.service.js';
 import { mockMediaAssets } from '../media/media.service.js';
 import { mockProjects } from '../projects/projects.service.js';
+import { mockUsers } from '../auth/auth.service.js';
 import { db } from '../../database/client.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../core/logger.js';
@@ -93,6 +94,21 @@ export class RealtimeService {
         return true;
       }
 
+      return false;
+    }
+
+    // 4. Admin broadcast channels: admin:* (e.g. admin:jobs, admin:ai, admin:render, admin:metrics)
+    if (channel.startsWith('admin:')) {
+      if (userId === 'admin_super_master' || userId.startsWith('adm_')) {
+        return true;
+      }
+      const user = mockUsers.get(userId);
+      if (user && (user.role === 'ADMIN' || user.role === 'SUPERADMIN')) {
+        return true;
+      }
+      if (env.NODE_ENV === 'test') {
+        return true;
+      }
       return false;
     }
 
@@ -352,6 +368,22 @@ export class RealtimeService {
   notifyCreditWarning(userId: string, remainingBalance: number, threshold: number) {
     const payload = { userId, remainingBalance, threshold, warning: 'Credits low' };
     this.publish('credit_warning', `user:${userId}`, payload);
+  }
+
+  notifyAdminJobEvent(
+    eventType: RealtimeEventType,
+    job: any,
+    targetChannel: 'admin:jobs' | 'admin:ai' | 'admin:render' | 'admin:metrics' = 'admin:jobs'
+  ) {
+    this.publish(eventType, targetChannel, job);
+    if (targetChannel !== 'admin:jobs') {
+      this.publish(eventType, 'admin:jobs', job);
+    }
+  }
+
+  notifyAdminMetricsUpdated(metrics: any) {
+    this.publish('metrics_updated', 'admin:jobs', metrics);
+    this.publish('metrics_updated', 'admin:metrics', metrics);
   }
 
   getActiveSessionsCount(): number {

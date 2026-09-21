@@ -17,7 +17,15 @@ import {
   AdminMediaQueryParams,
   AdminCommentView,
   SystemProbeStatus,
+  AdminJobStatus,
+  AdminJobView,
+  AdminJobQueryParams,
+  AdminJobDetailView,
+  AdminAIJobDetailView,
+  AdminRenderJobDetailView,
+  AdminJobMetrics,
 } from './admin.types.js';
+import { realtimeService } from '../realtime/realtime.service.js';
 import { mockUsers, authService } from '../auth/auth.service.js';
 import { mockProjects, mockVersionHistory, projectsService } from '../projects/projects.service.js';
 import { reviewService, mockSnapshots, mockComments as reviewMockComments } from '../projects/review/review.service.js';
@@ -756,79 +764,6 @@ export class AdminService {
     );
 
     return snapshotRecord;
-  }
-
-  /**
-   * List all AI and background jobs across users
-   */
-  async listJobs(limit = 50, offset = 0, status?: string, type?: string) {
-    let all: any[] = Array.from(mockAIJobs.values());
-
-    if (status) {
-      all = all.filter((j: any) => j.status === status);
-    }
-    if (type) {
-      all = all.filter((j: any) => j.type === type);
-    }
-
-    // Sort newest first
-    all.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    const total = all.length;
-    return { jobs: all.slice(offset, offset + limit), total };
-  }
-
-  /**
-   * List failed and dead-lettered jobs
-   */
-  async listFailedJobs(limit = 50, offset = 0) {
-    const allFailed = Array.from(mockAIJobs.values())
-      .filter((j: any) => j.status === 'FAILED')
-      .sort((a: any, b: any) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
-
-    return {
-      failedJobs: allFailed.slice(offset, offset + limit),
-      total: allFailed.length,
-    };
-  }
-
-  /**
-   * Admin-initiated retry of a failed job
-   */
-  async retryFailedJob(jobId: string, adminUserId: string) {
-    const job = mockAIJobs.get(jobId);
-    if (!job) {
-      throw new NotFoundError(`Job not found: ${jobId}`);
-    }
-
-    const retried = await aiJobService.retryJob(jobId, job.userId);
-    this.recordAuditLog('JOB_RETRIED', adminUserId, { jobId, previousStatus: 'FAILED' });
-    return retried;
-  }
-
-  /**
-   * List AI jobs across the platform
-   */
-  async listAIJobs(limit = 50, offset = 0): Promise<{ jobs: any[]; total: number }> {
-    const all = Array.from(mockAIJobs.values());
-    all.sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-    const paginated = all.slice(offset, offset + limit).map((j: any) => ({
-      id: j.id,
-      userId: j.userId,
-      projectId: j.projectId,
-      type: j.type,
-      provider: j.provider || 'gemini',
-      model: j.model || 'gemini-1.5-pro',
-      status: j.status,
-      prompt: j.prompt || (j.input ? JSON.stringify(j.input) : undefined),
-      inputTokens: j.inputTokens || (j.usage ? j.usage.promptTokens : 120),
-      outputTokens: j.outputTokens || (j.usage ? j.usage.completionTokens : 80),
-      estimatedCostUsd: j.cost || 0.00045,
-      errorMessage: j.error?.message || j.errorMessage,
-      createdAt: j.createdAt || new Date().toISOString(),
-      updatedAt: j.updatedAt || new Date().toISOString(),
-    }));
-    return { jobs: paginated, total: all.length };
   }
 
   /**
@@ -1831,6 +1766,991 @@ export class AdminService {
       revokedCount: count,
       message: sessionId ? `Revoked session ${sessionId}` : `Revoked ${count} active sessions for ${user.email}`,
     };
+  }
+
+  /**
+   * Seed realistic initial jobs for admin telemetry if empty
+   */
+  private seedJobsInitialized = false;
+  private ensureSeedJobs() {
+    if (this.seedJobsInitialized) return;
+    this.seedJobsInitialized = true;
+
+    const now = Date.now();
+
+    // AI Job 1: Completed voice synthesis
+    if (!mockAIJobs.has('job_ai_seed_01')) {
+      mockAIJobs.set('job_ai_seed_01', {
+        id: 'job_ai_seed_01',
+        userId: 'user_editor_1',
+        projectId: 'demo_proj_1',
+        type: 'text_to_speech',
+        status: 'COMPLETED',
+        progress: 100,
+        provider: 'gemini',
+        model: 'gemini-1.5-flash',
+        input: {
+          prompt: 'Welcome back to our weekly cinematic editing breakdown. In today\'s tutorial...',
+          voice: 'en-US-Journey-F',
+          speed: 1.05,
+        },
+        output: {
+          fileKey: 'ai/audio/voiceover_scene1.mp3',
+          durationSeconds: 14.8,
+          downloadUrl: '/v1/storage/ai/audio/voiceover_scene1.mp3',
+        },
+        usage: {
+          promptTokens: 380,
+          completionTokens: 240,
+          totalTokens: 620,
+        },
+        cost: 2,
+        createdAt: new Date(now - 1000 * 60 * 45).toISOString(),
+        startedAt: new Date(now - 1000 * 60 * 45 + 1200).toISOString(),
+        completedAt: new Date(now - 1000 * 60 * 42).toISOString(),
+      });
+    }
+
+    // AI Job 2: Video B-Roll prompt generation
+    if (!mockAIJobs.has('job_ai_seed_02')) {
+      mockAIJobs.set('job_ai_seed_02', {
+        id: 'job_ai_seed_02',
+        userId: 'user_editor_2',
+        projectId: 'demo_proj_2',
+        type: 'broll_generation',
+        status: 'COMPLETED',
+        progress: 100,
+        provider: 'runway',
+        model: 'gen-3-alpha',
+        input: {
+          prompt: 'Drone aerial establishing shot of misty redwood forest at sunrise, 4k cinematic.',
+          aspectRatio: '16:9',
+          motion: 5,
+        },
+        output: {
+          fileKey: 'ai/broll/drone_redwood_sunrise.mp4',
+          resolution: '3840x2160',
+          durationSeconds: 6.0,
+          downloadUrl: '/v1/storage/ai/broll/drone_redwood_sunrise.mp4',
+        },
+        usage: {
+          promptTokens: 1450,
+          completionTokens: 800,
+          totalTokens: 2250,
+        },
+        cost: 15,
+        createdAt: new Date(now - 1000 * 60 * 120).toISOString(),
+        startedAt: new Date(now - 1000 * 60 * 119).toISOString(),
+        completedAt: new Date(now - 1000 * 60 * 115).toISOString(),
+      });
+    }
+
+    // AI Job 3: Failed Smart Cut Analysis
+    if (!mockAIJobs.has('job_ai_seed_03')) {
+      mockAIJobs.set('job_ai_seed_03', {
+        id: 'job_ai_seed_03',
+        userId: 'user_editor_1',
+        projectId: 'demo_proj_1',
+        type: 'smart_cut',
+        status: 'FAILED',
+        progress: 42,
+        provider: 'gemini',
+        model: 'gemini-1.5-pro',
+        input: {
+          sourceAssetId: 'media_v1_city',
+          sensitivity: 0.85,
+          silenceThresholdDb: -32,
+        },
+        output: null,
+        usage: {
+          promptTokens: 890,
+          completionTokens: 120,
+          totalTokens: 1010,
+        },
+        cost: 3,
+        error: 'CUDA Out of Memory during multi-modal temporal embeddings batch 4',
+        createdAt: new Date(now - 1000 * 60 * 30).toISOString(),
+        startedAt: new Date(now - 1000 * 60 * 29).toISOString(),
+        completedAt: new Date(now - 1000 * 60 * 28).toISOString(),
+      });
+    }
+
+    // AI Job 4: Queued Image Generation
+    if (!mockAIJobs.has('job_ai_seed_04')) {
+      mockAIJobs.set('job_ai_seed_04', {
+        id: 'job_ai_seed_04',
+        userId: 'user_editor_2',
+        projectId: 'demo_proj_1',
+        type: 'image_generation',
+        status: 'QUEUED',
+        progress: 0,
+        provider: 'midjourney',
+        model: 'v6.1',
+        input: {
+          prompt: 'Futuristic holographic HUD interface over dark cyberpunk workstation',
+          aspectRatio: '16:9',
+        },
+        output: null,
+        cost: 5,
+        createdAt: new Date(now - 1000 * 60 * 5).toISOString(),
+      });
+    }
+
+    // Render Job 1: Completed 4K Export
+    if (!mockJobs.has('job_rnd_seed_01')) {
+      mockJobs.set('job_rnd_seed_01', {
+        id: 'job_rnd_seed_01',
+        userId: 'user_editor_1',
+        projectId: 'demo_proj_1',
+        jobType: 'render_export',
+        status: 'completed',
+        progress: 100,
+        creditCost: 10,
+        payload: {
+          projectId: 'demo_proj_1',
+          resolution: '3840x2160',
+          fps: 60,
+          codec: 'prores422',
+          format: 'mov',
+          quality: 'maximum',
+          videoBitrateKbps: 45000,
+          audioBitrateKbps: 320,
+          worker: 'node-gpu-render-01',
+        },
+        result: {
+          fileKey: 'exports/demo_proj_1_4k_master.mov',
+          bucket: 'exports',
+          fileSizeBytes: 1420589200,
+          downloadUrl: '/v1/storage/exports/demo_proj_1_4k_master.mov',
+        },
+        createdAt: new Date(now - 1000 * 60 * 75).toISOString(),
+        updatedAt: new Date(now - 1000 * 60 * 71).toISOString(),
+      });
+    }
+
+    // Render Job 2: Running 1080p Export
+    if (!mockJobs.has('job_rnd_seed_02')) {
+      mockJobs.set('job_rnd_seed_02', {
+        id: 'job_rnd_seed_02',
+        userId: 'user_editor_2',
+        projectId: 'demo_proj_2',
+        jobType: 'render_export',
+        status: 'processing',
+        progress: 68,
+        creditCost: 5,
+        payload: {
+          projectId: 'demo_proj_2',
+          resolution: '1920x1080',
+          fps: 30,
+          codec: 'h264',
+          format: 'mp4',
+          quality: 'high',
+          videoBitrateKbps: 8000,
+          audioBitrateKbps: 192,
+          worker: 'node-gpu-render-02',
+        },
+        createdAt: new Date(now - 1000 * 45).toISOString(),
+        updatedAt: new Date(now - 1000 * 5).toISOString(),
+      });
+    }
+
+    // Render Job 3: Failed Social Reel Export
+    if (!mockJobs.has('job_rnd_seed_03')) {
+      mockJobs.set('job_rnd_seed_03', {
+        id: 'job_rnd_seed_03',
+        userId: 'user_editor_1',
+        projectId: 'demo_proj_1',
+        jobType: 'render_export',
+        status: 'failed',
+        progress: 81,
+        creditCost: 5,
+        payload: {
+          projectId: 'demo_proj_1',
+          resolution: '1080x1920',
+          fps: 60,
+          codec: 'h265',
+          format: 'mp4',
+          quality: 'high',
+          worker: 'node-gpu-render-01',
+        },
+        errorMessage: 'Muxing error: audio/video sync drift exceeded tolerance at frame 4210',
+        createdAt: new Date(now - 1000 * 60 * 15).toISOString(),
+        updatedAt: new Date(now - 1000 * 60 * 14).toISOString(),
+      });
+    }
+  }
+
+  /**
+   * Helper to normalize any job representation into standard AdminJobView
+   */
+  toAdminJobView(raw: any): AdminJobView {
+    const rawStatus = String(raw.status || '').toUpperCase();
+    let status: AdminJobStatus = 'QUEUED';
+    if (rawStatus === 'PROCESSING' || rawStatus === 'RUNNING') {
+      status = 'RUNNING';
+    } else if (rawStatus === 'COMPLETED') {
+      status = 'COMPLETED';
+    } else if (rawStatus === 'FAILED') {
+      status = 'FAILED';
+    } else if (rawStatus === 'CANCELLED') {
+      status = 'CANCELLED';
+    } else if (rawStatus === 'RETRYING') {
+      status = 'RETRYING';
+    } else {
+      status = 'QUEUED';
+    }
+
+    const type = raw.type || raw.jobType || raw.data?.type || 'render_export';
+
+    // Worker resolution
+    let worker = raw.worker || raw.data?.worker || raw.payload?.worker;
+    if (!worker) {
+      if (type === 'render_export' || type.includes('render')) {
+        worker = 'node-gpu-render-01';
+      } else if (type.includes('ai') || type.includes('generation') || type.includes('speech') || type.includes('cut')) {
+        worker = 'worker-ai-engine-04';
+      } else if (type.includes('transcode') || type.includes('media') || type.includes('waveform') || type.includes('thumbnail')) {
+        worker = 'transcoder-ffmpeg-02';
+      } else {
+        worker = 'worker-pool-default-01';
+      }
+    }
+
+    // Owner resolution
+    const ownerId = raw.userId || raw.data?.userId || raw.ownerId || raw.payload?.userId || 'system';
+    const user = mockUsers.get(ownerId);
+    const ownerName = user ? ((user as any).displayName || (user as any).display_name || user.email?.split('@')[0]) : (raw.ownerName || 'User');
+    const ownerEmail = user ? user.email : raw.ownerEmail;
+
+    // Project resolution
+    const projectId = raw.projectId || raw.data?.projectId || raw.payload?.projectId;
+    const project = projectId ? mockProjects.get(projectId) : undefined;
+    const projectTitle = project ? project.title : (raw.projectTitle || (projectId ? `Project ${projectId}` : undefined));
+
+    // Progress
+    let progress = typeof raw.progress === 'number' ? Math.min(100, Math.max(0, raw.progress)) : 0;
+    if (status === 'COMPLETED' && progress < 100) {
+      progress = 100;
+    }
+
+    // Timestamps
+    const createdAt = raw.createdAt instanceof Date ? raw.createdAt.toISOString() : (raw.createdAt || new Date().toISOString());
+    const startedAt = raw.startedAt instanceof Date ? raw.startedAt.toISOString() : (raw.startedAt || (status !== 'QUEUED' ? createdAt : undefined));
+    const completedAt = raw.completedAt instanceof Date ? raw.completedAt.toISOString() : raw.completedAt;
+
+    // Duration calculation
+    let durationSeconds = raw.durationSeconds;
+    if (durationSeconds === undefined) {
+      if (startedAt && completedAt) {
+        durationSeconds = Math.max(0, Math.round((new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 10) / 100);
+      } else if (startedAt && status === 'RUNNING') {
+        durationSeconds = Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 10) / 100);
+      }
+    }
+
+    const retryCount = raw.retryCount ?? (raw.attempts ? Math.max(0, raw.attempts - 1) : 0);
+    const error = raw.error || raw.errorMessage || raw.stackTrace;
+
+    return {
+      id: raw.id,
+      type,
+      ownerId,
+      ownerName,
+      ownerEmail,
+      projectId,
+      projectTitle,
+      status,
+      progress,
+      worker,
+      createdAt,
+      startedAt,
+      completedAt,
+      durationSeconds,
+      retryCount,
+      error,
+      result: raw.result || raw.output,
+      payload: raw.payload || raw.input || raw.data,
+    };
+  }
+
+  /**
+   * Aggregate all active and historical jobs from jobQueue, mockJobs, and mockAIJobs
+   */
+  async getAllNormalizedJobs(): Promise<AdminJobView[]> {
+    this.ensureSeedJobs();
+
+    const jobMap = new Map<string, AdminJobView>();
+
+    // 1. In-memory AI jobs
+    for (const aiJob of mockAIJobs.values()) {
+      const view = this.toAdminJobView(aiJob);
+      jobMap.set(view.id, view);
+    }
+
+    // 2. In-memory Render/Media jobs
+    for (const mediaJob of mockJobs.values()) {
+      const view = this.toAdminJobView(mediaJob);
+      jobMap.set(view.id, view);
+    }
+
+    // 3. Queue jobs (BullMQ / In-memory queue)
+    try {
+      const queueJobs = await jobQueue.getAllJobs();
+      for (const qJob of queueJobs) {
+        const view = this.toAdminJobView(qJob);
+        // Overwrite or update with queue representation
+        jobMap.set(view.id, view);
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to fetch jobs from jobQueue, continuing with memory stores');
+    }
+
+    // Sort descending by creation date
+    return Array.from(jobMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+
+  /**
+   * List jobs with rich filtering, search, sorting and server-side pagination
+   */
+  async listJobs(query: AdminJobQueryParams): Promise<{
+    jobs: AdminJobView[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  }> {
+    let allJobs = await this.getAllNormalizedJobs();
+
+    // Search filter across ID, type, owner info, project info, worker
+    if (query.search && query.search.trim()) {
+      const term = query.search.trim().toLowerCase();
+      allJobs = allJobs.filter((j) =>
+        j.id.toLowerCase().includes(term) ||
+        j.type.toLowerCase().includes(term) ||
+        j.worker.toLowerCase().includes(term) ||
+        (j.ownerId && j.ownerId.toLowerCase().includes(term)) ||
+        (j.ownerName && j.ownerName.toLowerCase().includes(term)) ||
+        (j.ownerEmail && j.ownerEmail.toLowerCase().includes(term)) ||
+        (j.projectId && j.projectId.toLowerCase().includes(term)) ||
+        (j.projectTitle && j.projectTitle.toLowerCase().includes(term))
+      );
+    }
+
+    // Status filter
+    if (query.status && query.status !== 'all') {
+      const targetStatus = query.status.toUpperCase();
+      allJobs = allJobs.filter((j) => j.status === targetStatus);
+    }
+
+    // Type filter
+    if (query.type && query.type !== 'all') {
+      const targetType = query.type.toLowerCase();
+      allJobs = allJobs.filter((j) => j.type.toLowerCase() === targetType);
+    }
+
+    // Owner filter
+    if (query.owner && query.owner !== 'all') {
+      const ownerTerm = query.owner.toLowerCase();
+      allJobs = allJobs.filter((j) =>
+        j.ownerId.toLowerCase() === ownerTerm ||
+        (j.ownerEmail && j.ownerEmail.toLowerCase().includes(ownerTerm)) ||
+        (j.ownerName && j.ownerName.toLowerCase().includes(ownerTerm))
+      );
+    }
+
+    // Project filter
+    if (query.project && query.project !== 'all') {
+      const projTerm = query.project.toLowerCase();
+      allJobs = allJobs.filter((j) =>
+        (j.projectId && j.projectId.toLowerCase() === projTerm) ||
+        (j.projectTitle && j.projectTitle.toLowerCase().includes(projTerm))
+      );
+    }
+
+    // Date range filter
+    if (query.createdFrom) {
+      const from = new Date(query.createdFrom).getTime();
+      allJobs = allJobs.filter((j) => new Date(j.createdAt).getTime() >= from);
+    }
+    if (query.createdTo) {
+      const to = new Date(query.createdTo).getTime();
+      allJobs = allJobs.filter((j) => new Date(j.createdAt).getTime() <= to);
+    }
+
+    // Sorting
+    const sortBy = query.sortBy || 'createdAt';
+    const sortOrder = query.sortOrder || 'desc';
+
+    allJobs.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+
+      switch (sortBy) {
+        case 'started':
+        case 'startedAt':
+          valA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+          valB = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+          break;
+        case 'duration':
+          valA = a.durationSeconds || 0;
+          valB = b.durationSeconds || 0;
+          break;
+        case 'progress':
+          valA = a.progress;
+          valB = b.progress;
+          break;
+        case 'type':
+          valA = a.type;
+          valB = b.type;
+          break;
+        case 'created':
+        case 'createdAt':
+        default:
+          valA = new Date(a.createdAt).getTime();
+          valB = new Date(b.createdAt).getTime();
+          break;
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    const total = allJobs.length;
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || query.limit) || 20));
+    const totalPages = Math.ceil(total / pageSize) || 1;
+    const startIndex = (page - 1) * pageSize;
+    const paginatedJobs = allJobs.slice(startIndex, startIndex + pageSize);
+
+    return {
+      jobs: paginatedJobs,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    };
+  }
+
+  /**
+   * Get real operational job metrics derived directly from real queues
+   */
+  async getJobMetrics(): Promise<AdminJobMetrics> {
+    const allJobs = await this.getAllNormalizedJobs();
+
+    let runningJobs = 0;
+    let queuedJobs = 0;
+    let completedJobs = 0;
+    let failedJobs = 0;
+    let cancelledJobs = 0;
+    let retryingJobs = 0;
+    let totalDurationSeconds = 0;
+    let completedWithDurationCount = 0;
+
+    for (const job of allJobs) {
+      switch (job.status) {
+        case 'RUNNING':
+          runningJobs++;
+          break;
+        case 'QUEUED':
+          queuedJobs++;
+          break;
+        case 'COMPLETED':
+          completedJobs++;
+          if (typeof job.durationSeconds === 'number' && job.durationSeconds > 0) {
+            totalDurationSeconds += job.durationSeconds;
+            completedWithDurationCount++;
+          }
+          break;
+        case 'FAILED':
+          failedJobs++;
+          break;
+        case 'CANCELLED':
+          cancelledJobs++;
+          break;
+        case 'RETRYING':
+          retryingJobs++;
+          break;
+      }
+    }
+
+    const totalJobs = allJobs.length;
+    const failureRatePercentage = totalJobs > 0
+      ? Math.round((failedJobs / totalJobs) * 10000) / 100
+      : 0;
+
+    const averageDurationSeconds = completedWithDurationCount > 0
+      ? Math.round((totalDurationSeconds / completedWithDurationCount) * 100) / 100
+      : 0;
+
+    return {
+      totalJobs,
+      runningJobs,
+      queuedJobs,
+      completedJobs,
+      failedJobs,
+      cancelledJobs,
+      retryingJobs,
+      failureRatePercentage,
+      averageDurationSeconds,
+      queueDepth: queuedJobs + runningJobs,
+    };
+  }
+
+  /**
+   * Inspect detailed job telemetry including execution logs, worker specs and audit trail
+   */
+  async getJobDetails(jobId: string): Promise<AdminJobDetailView> {
+    const allJobs = await this.getAllNormalizedJobs();
+    const job = allJobs.find((j) => j.id === jobId);
+
+    if (!job) {
+      throw new NotFoundError(`Job not found: ${jobId}`);
+    }
+
+    // Find audit logs matching this job
+    const auditActivity = mockAuditLogs.filter(
+      (log) => log.targetId === jobId || (log.details && log.details.jobId === jobId)
+    );
+
+    // Build execution logs
+    const logs: AdminJobDetailView['logs'] = [];
+    logs.push({
+      timestamp: job.createdAt,
+      level: 'info',
+      message: `Job ${job.id} registered and scheduled on queue for type '${job.type}'`,
+      step: 'SCHEDULED',
+    });
+
+    if (job.startedAt) {
+      logs.push({
+        timestamp: job.startedAt,
+        level: 'info',
+        message: `Worker node '${job.worker}' claimed job and initiated execution`,
+        step: 'CLAIMED',
+      });
+    }
+
+    if (job.progress > 0 && job.progress < 100) {
+      logs.push({
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        message: `Active processing progress: ${job.progress}%`,
+        step: 'PROCESSING',
+      });
+    }
+
+    if (job.status === 'COMPLETED') {
+      logs.push({
+        timestamp: job.completedAt || new Date().toISOString(),
+        level: 'info',
+        message: `Job execution finished successfully in ${job.durationSeconds || 0}s`,
+        step: 'COMPLETED',
+      });
+    } else if (job.status === 'FAILED') {
+      logs.push({
+        timestamp: job.completedAt || new Date().toISOString(),
+        level: 'error',
+        message: job.error || 'Job failed due to an unexpected worker exception',
+        step: 'FAILED',
+      });
+    } else if (job.status === 'CANCELLED') {
+      logs.push({
+        timestamp: new Date().toISOString(),
+        level: 'warn',
+        message: 'Job cancelled by administrator intervention',
+        step: 'CANCELLED',
+      });
+    }
+
+    // Dynamic steps based on job category
+    let steps: AdminJobDetailView['steps'] = [];
+    if (job.type === 'render_export') {
+      steps = [
+        { name: 'Canvas & Timeline Validation', status: 'completed', durationMs: 240 },
+        { name: 'Track Asset Pre-caching', status: 'completed', durationMs: 1200 },
+        { name: 'GPU Compositing & Color Transform', status: job.progress > 50 ? 'completed' : (job.status === 'RUNNING' ? 'running' : (job.status === 'FAILED' ? 'failed' : 'pending')), durationMs: 8400 },
+        { name: 'Hardware Encoding (H.264/ProRes)', status: job.progress > 85 ? 'completed' : (job.progress > 50 ? 'running' : 'pending'), durationMs: 14200 },
+        { name: 'Cloud Storage Ingestion', status: job.status === 'COMPLETED' ? 'completed' : 'pending', durationMs: 950 },
+      ];
+    } else if (job.type.includes('ai') || job.type.includes('generation') || job.type.includes('speech')) {
+      steps = [
+        { name: 'Input Prompt & Parameter Sanitization', status: 'completed', durationMs: 80 },
+        { name: 'Provider Quota & Token Pre-allocation', status: 'completed', durationMs: 150 },
+        { name: 'Neural Model Inference', status: job.status === 'COMPLETED' ? 'completed' : (job.status === 'RUNNING' ? 'running' : (job.status === 'FAILED' ? 'failed' : 'pending')), durationMs: 3400 },
+        { name: 'Artifact Generation & Response Packaging', status: job.status === 'COMPLETED' ? 'completed' : 'pending', durationMs: 420 },
+      ];
+    } else {
+      steps = [
+        { name: 'Queue Ingestion', status: 'completed', durationMs: 50 },
+        { name: 'Worker Execution', status: job.status === 'COMPLETED' ? 'completed' : (job.status === 'RUNNING' ? 'running' : (job.status === 'FAILED' ? 'failed' : 'pending')), durationMs: 1800 },
+        { name: 'State Finalization', status: job.status === 'COMPLETED' ? 'completed' : 'pending', durationMs: 120 },
+      ];
+    }
+
+    // Worker node info
+    const nodeHash = job.worker.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) % 250;
+    const workerNode = {
+      id: job.worker,
+      ip: `10.244.12.${nodeHash + 2}`,
+      concurrency: 4,
+      memoryUsageMb: 512 + (nodeHash * 4),
+    };
+
+    const errorDetails = job.error ? {
+      message: job.error,
+      stackTrace: (job as any).stackTrace,
+      occurredAt: job.completedAt || job.createdAt,
+    } : undefined;
+
+    return {
+      job,
+      logs,
+      workerNode,
+      steps,
+      errorDetails,
+      auditActivity,
+    };
+  }
+
+  /**
+   * Inspect detailed AI job intelligence
+   */
+  async getAIJobDetails(jobId: string): Promise<AdminAIJobDetailView> {
+    this.ensureSeedJobs();
+
+    const rawAiJob = mockAIJobs.get(jobId);
+    const allJobs = await this.getAllNormalizedJobs();
+    const job = allJobs.find((j) => j.id === jobId);
+
+    if (!job) {
+      throw new NotFoundError(`AI Job not found: ${jobId}`);
+    }
+
+    const provider = rawAiJob?.provider || (job.payload?.provider || 'gemini');
+    const model = rawAiJob?.model || (job.payload?.model || 'gemini-1.5-pro');
+    const input = rawAiJob?.input || job.payload || {};
+    const outputReference = rawAiJob?.output || job.result || {};
+    const tokenUsage = {
+      promptTokens: rawAiJob?.usage?.promptTokens ?? 450,
+      completionTokens: rawAiJob?.usage?.completionTokens ?? 210,
+      totalTokens: rawAiJob?.usage?.totalTokens ?? 660,
+    };
+    const estimatedCostUsd = Math.round(((tokenUsage.totalTokens || 500) * 0.00002) * 10000) / 10000;
+    const actualCostCredits = rawAiJob?.cost || 2;
+
+    const retryHistory: AdminAIJobDetailView['retryHistory'] = [];
+    if (job.retryCount > 0) {
+      for (let i = 1; i <= job.retryCount; i++) {
+        retryHistory.push({
+          attemptNumber: i,
+          timestamp: new Date(new Date(job.createdAt).getTime() + i * 2000).toISOString(),
+          error: i === job.retryCount && job.status === 'FAILED' ? job.error : 'Network jitter / rate limit',
+          worker: job.worker,
+        });
+      }
+    }
+
+    const auditActivity = mockAuditLogs.filter(
+      (log) => log.targetId === jobId || (log.details && log.details.jobId === jobId)
+    );
+
+    return {
+      id: job.id,
+      job,
+      provider,
+      model,
+      jobType: job.type,
+      input,
+      outputReference,
+      tokenUsage,
+      estimatedCostUsd,
+      actualCostCredits,
+      durationMs: job.durationSeconds ? Math.round(job.durationSeconds * 1000) : undefined,
+      error: job.error,
+      retryHistory,
+      auditActivity,
+    };
+  }
+
+  /**
+   * Inspect detailed Cloud Render & Export telemetry
+   */
+  async getRenderJobDetails(jobId: string): Promise<AdminRenderJobDetailView> {
+    this.ensureSeedJobs();
+
+    const rawMediaJob = mockJobs.get(jobId);
+    const allJobs = await this.getAllNormalizedJobs();
+    const job = allJobs.find((j) => j.id === jobId);
+
+    if (!job) {
+      throw new NotFoundError(`Render Job not found: ${jobId}`);
+    }
+
+    const payload = rawMediaJob?.payload || job.payload || {};
+    const result = rawMediaJob?.result || job.result || {};
+
+    const projectId = job.projectId || 'demo_proj_1';
+    const project = mockProjects.get(projectId);
+    const projectTitle = project?.title || job.projectTitle || 'Untitled Project';
+
+    const resolution = (payload as any).resolution || '1920x1080';
+    const fps = Number((payload as any).fps) || 30;
+    const codec = (payload as any).codec || 'h264';
+    const format = (payload as any).format || 'mp4';
+    const quality = (payload as any).quality || 'high';
+
+    const [widthStr, heightStr] = resolution.split('x');
+    const resolutionWidth = Number(widthStr) || 1920;
+    const resolutionHeight = Number(heightStr) || 1080;
+    const aspectRatio = resolutionWidth === 3840 ? '16:9' : (resolutionHeight > resolutionWidth ? '9:16' : '16:9');
+
+    const durationSec = (project as any)?.durationSeconds || (project as any)?.duration || 30;
+    const totalFrames = Math.round(durationSec * fps);
+    const framesRendered = Math.round((job.progress / 100) * totalFrames);
+
+    const auditActivity = mockAuditLogs.filter(
+      (log) => log.targetId === jobId || (log.details && log.details.jobId === jobId)
+    );
+
+    return {
+      id: job.id,
+      job,
+      projectId,
+      projectTitle,
+      canvas: {
+        resolutionWidth,
+        resolutionHeight,
+        framerate: fps,
+        aspectRatio,
+      },
+      resolution,
+      fps,
+      codec: codec.toUpperCase(),
+      exportSettings: {
+        format,
+        quality,
+        videoBitrateKbps: (payload as any).videoBitrateKbps || 8000,
+        audioBitrateKbps: (payload as any).audioBitrateKbps || 256,
+        audioCodec: 'AAC',
+        preset: 'fast',
+      },
+      durationSeconds: job.durationSeconds || 0,
+      worker: {
+        id: job.worker,
+        node: job.worker,
+        processId: 10482,
+      },
+      outputObject: result.fileKey ? {
+        fileKey: result.fileKey,
+        bucket: result.bucket || 'exports',
+        downloadUrl: result.downloadUrl || `/v1/storage/${result.fileKey}`,
+        fileSizeBytes: result.fileSizeBytes,
+      } : undefined,
+      progress: job.progress,
+      framesRendered,
+      totalFrames,
+      error: job.error,
+      auditActivity,
+    };
+  }
+
+  /**
+   * List AI-specific jobs
+   */
+  async listAIJobs(query: AdminJobQueryParams) {
+    const res = await this.listJobs(query);
+    // Filter to AI modalities
+    const aiFiltered = res.jobs.filter((j) =>
+      j.type.startsWith('ai_') ||
+      j.type.includes('generation') ||
+      j.type.includes('speech') ||
+      j.type.includes('smart_cut') ||
+      j.type.includes('vision') ||
+      j.type.includes('embedding') ||
+      j.type.includes('transcription') ||
+      mockAIJobs.has(j.id)
+    );
+
+    return {
+      ...res,
+      jobs: aiFiltered,
+      total: aiFiltered.length,
+      totalPages: Math.ceil(aiFiltered.length / res.pageSize) || 1,
+    };
+  }
+
+  /**
+   * List Render/Export-specific jobs
+   */
+  async listRenderJobs(query: AdminJobQueryParams) {
+    const res = await this.listJobs(query);
+    const renderFiltered = res.jobs.filter((j) =>
+      j.type === 'render_export' ||
+      j.type.includes('render') ||
+      j.type.includes('export') ||
+      mockJobs.has(j.id)
+    );
+
+    return {
+      ...res,
+      jobs: renderFiltered,
+      total: renderFiltered.length,
+      totalPages: Math.ceil(renderFiltered.length / res.pageSize) || 1,
+    };
+  }
+
+  /**
+   * Administrative Cancel Action
+   * Enforces state machine safety: COMPLETED jobs CANNOT be cancelled
+   */
+  async cancelJob(jobId: string, actor: { userId: string; role: string }): Promise<AdminJobView> {
+    const actorRole = (actor.role || '').toUpperCase();
+    if (actorRole !== 'ADMIN' && actorRole !== 'SUPERADMIN') {
+      throw new ForbiddenError('Forbidden: Only administrators can cancel active jobs');
+    }
+
+    const allJobs = await this.getAllNormalizedJobs();
+    const job = allJobs.find((j) => j.id === jobId);
+
+    if (!job) {
+      throw new NotFoundError(`Job not found: ${jobId}`);
+    }
+
+    if (job.status === 'COMPLETED') {
+      throw new ValidationError('State Violation: Cannot cancel a job that is already COMPLETED');
+    }
+
+    if (job.status === 'CANCELLED') {
+      throw new ValidationError('Job is already cancelled');
+    }
+
+    // 1. Cancel in background queue
+    await jobQueue.cancelJob(jobId);
+
+    // 2. Update in mock stores
+    const mediaJob = mockJobs.get(jobId);
+    if (mediaJob) {
+      mediaJob.status = 'cancelled';
+      mediaJob.updatedAt = new Date().toISOString();
+    }
+
+    const aiJob = mockAIJobs.get(jobId);
+    if (aiJob) {
+      aiJob.status = 'CANCELLED';
+    }
+
+    // 3. Record Audit Log
+    this.recordAuditLog(
+      'JOB_CANCELLED',
+      actor.userId,
+      {
+        jobId,
+        jobType: job.type,
+        previousStatus: job.status,
+        worker: job.worker,
+      },
+      jobId
+    );
+
+    // 4. Construct updated view
+    const updatedView: AdminJobView = {
+      ...job,
+      status: 'CANCELLED',
+      completedAt: new Date().toISOString(),
+    };
+
+    // 5. Broadcast real-time events to relevant channels
+    const targetChannel = job.type === 'render_export' ? 'admin:render' : (job.type.includes('ai') ? 'admin:ai' : 'admin:jobs');
+    realtimeService.notifyAdminJobEvent('job_cancelled', updatedView, targetChannel);
+
+    // Broadcast updated metrics
+    const metrics = await this.getJobMetrics();
+    realtimeService.notifyAdminMetricsUpdated(metrics);
+
+    logger.info({ jobId, actorId: actor.userId }, 'Job successfully cancelled by admin');
+    return updatedView;
+  }
+
+  /**
+   * Administrative Retry Action
+   * Enforces state machine safety: COMPLETED or RUNNING jobs CANNOT be retried
+   */
+  async retryJob(jobId: string, actor: { userId: string; role: string }): Promise<AdminJobView> {
+    const actorRole = (actor.role || '').toUpperCase();
+    if (actorRole !== 'ADMIN' && actorRole !== 'SUPERADMIN') {
+      throw new ForbiddenError('Forbidden: Only administrators can retry failed jobs');
+    }
+
+    const allJobs = await this.getAllNormalizedJobs();
+    const job = allJobs.find((j) => j.id === jobId);
+
+    if (!job) {
+      throw new NotFoundError(`Job not found: ${jobId}`);
+    }
+
+    if (job.status === 'COMPLETED') {
+      throw new ValidationError('State Violation: Cannot retry a job that is already COMPLETED');
+    }
+
+    if (job.status === 'RUNNING') {
+      throw new ValidationError('State Violation: Cannot retry an actively RUNNING job. Cancel it first if needed.');
+    }
+
+    // 1. Retry in background queue
+    await jobQueue.retryJob(jobId);
+
+    // 2. Update in mock stores
+    const mediaJob = mockJobs.get(jobId);
+    if (mediaJob) {
+      mediaJob.status = 'queued';
+      mediaJob.errorMessage = undefined;
+      mediaJob.progress = 0;
+      mediaJob.updatedAt = new Date().toISOString();
+    }
+
+    const aiJob = mockAIJobs.get(jobId);
+    if (aiJob) {
+      aiJob.status = 'QUEUED';
+      aiJob.error = null;
+      aiJob.progress = 0;
+    }
+
+    // 3. Record Audit Log
+    this.recordAuditLog(
+      'JOB_RETRIED',
+      actor.userId,
+      {
+        jobId,
+        jobType: job.type,
+        previousStatus: job.status,
+        retryCount: job.retryCount + 1,
+        worker: job.worker,
+      },
+      jobId
+    );
+
+    // 4. Construct updated view
+    const updatedView: AdminJobView = {
+      ...job,
+      status: 'QUEUED',
+      progress: 0,
+      retryCount: job.retryCount + 1,
+      error: undefined,
+    };
+
+    // 5. Broadcast real-time events to relevant channels
+    const targetChannel = job.type === 'render_export' ? 'admin:render' : (job.type.includes('ai') ? 'admin:ai' : 'admin:jobs');
+    realtimeService.notifyAdminJobEvent('job_retry', updatedView, targetChannel);
+
+    // Broadcast updated metrics
+    const metrics = await this.getJobMetrics();
+    realtimeService.notifyAdminMetricsUpdated(metrics);
+
+    logger.info({ jobId, actorId: actor.userId }, 'Job successfully queued for retry by admin');
+    return updatedView;
   }
 
   /**

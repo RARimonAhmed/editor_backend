@@ -9,7 +9,15 @@ export type RealtimeEventType =
   | 'project_shared'
   | 'comment_added'
   | 'subscription_changed'
-  | 'credit_warning';
+  | 'credit_warning'
+  | 'job_created'
+  | 'job_started'
+  | 'job_progress'
+  | 'job_completed'
+  | 'job_failed'
+  | 'job_cancelled'
+  | 'job_retry'
+  | 'metrics_updated';
 
 export interface RealtimeEnvelope<T = any> {
   eventId: string;

@@ -86,38 +86,123 @@ export class AdminController {
   }
 
   async listJobs(request: FastifyRequest, reply: FastifyReply) {
-    const query = request.query as { limit?: string; offset?: string; status?: string; type?: string };
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
-    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : undefined;
+    const offset = query.offset ? parseInt(query.offset, 10) : undefined;
 
-    const result = await adminService.listJobs(limit, offset, query.status, query.type);
+    const result = await adminService.listJobs({
+      search: query.search,
+      status: query.status,
+      type: query.type,
+      owner: query.owner,
+      project: query.project,
+      createdFrom: query.createdFrom,
+      createdTo: query.createdTo,
+      sortBy: query.sortBy as any,
+      sortOrder: query.sortOrder as any,
+      limit,
+      pageSize: limit,
+      page,
+      offset,
+    });
     return reply.status(200).send(createSuccessResponse(result));
   }
 
-  async listFailedJobs(request: FastifyRequest, reply: FastifyReply) {
-    const query = request.query as { limit?: string; offset?: string };
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
-    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+  async getJobDetails(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const details = await adminService.getJobDetails(id);
+    return reply.status(200).send(createSuccessResponse(details));
+  }
 
-    const result = await adminService.listFailedJobs(limit, offset);
+  async getJobMetrics(_request: FastifyRequest, reply: FastifyReply) {
+    const metrics = await adminService.getJobMetrics();
+    return reply.status(200).send(createSuccessResponse(metrics));
+  }
+
+  async cancelJob(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const result = await adminService.cancelJob(id, actor);
     return reply.status(200).send(createSuccessResponse(result));
   }
 
   async retryJob(request: FastifyRequest, reply: FastifyReply) {
     const { id } = request.params as { id: string };
-    const actorId = (request as any).user?.userId || 'admin_system';
-
-    const result = await adminService.retryFailedJob(id, actorId);
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const result = await adminService.retryJob(id, actor);
     return reply.status(200).send(createSuccessResponse(result));
   }
 
   async listAIJobs(request: FastifyRequest, reply: FastifyReply) {
-    const query = request.query as { limit?: string; offset?: string };
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
-    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : undefined;
+    const offset = query.offset ? parseInt(query.offset, 10) : undefined;
 
-    const result = await adminService.listAIJobs(limit, offset);
+    const result = await adminService.listAIJobs({
+      search: query.search,
+      status: query.status,
+      type: query.type,
+      owner: query.owner,
+      project: query.project,
+      createdFrom: query.createdFrom,
+      createdTo: query.createdTo,
+      sortBy: query.sortBy as any,
+      sortOrder: query.sortOrder as any,
+      limit,
+      pageSize: limit,
+      page,
+      offset,
+    });
     return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  async getAIJobDetails(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const details = await adminService.getAIJobDetails(id);
+    return reply.status(200).send(createSuccessResponse(details));
+  }
+
+  async listRenderJobs(request: FastifyRequest, reply: FastifyReply) {
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : undefined;
+    const offset = query.offset ? parseInt(query.offset, 10) : undefined;
+
+    const result = await adminService.listRenderJobs({
+      search: query.search,
+      status: query.status,
+      type: query.type,
+      owner: query.owner,
+      project: query.project,
+      createdFrom: query.createdFrom,
+      createdTo: query.createdTo,
+      sortBy: query.sortBy as any,
+      sortOrder: query.sortOrder as any,
+      limit,
+      pageSize: limit,
+      page,
+      offset,
+    });
+    return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  async getRenderJobDetails(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const details = await adminService.getRenderJobDetails(id);
+    return reply.status(200).send(createSuccessResponse(details));
+  }
+
+  async listFailedJobs(request: FastifyRequest, reply: FastifyReply) {
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const result = await adminService.listJobs({
+      status: 'FAILED',
+      limit,
+      pageSize: limit,
+    });
+    return reply.status(200).send(createSuccessResponse(result.jobs));
   }
 
   async getUsage(request: FastifyRequest, reply: FastifyReply) {
