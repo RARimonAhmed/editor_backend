@@ -52,7 +52,17 @@ export async function adminRoutes(fastify: FastifyInstance) {
     protectedAdmin.patch('/users/:id/status', adminController.updateUserStatus.bind(adminController));
     protectedAdmin.post('/users/:id/revoke-sessions', adminController.revokeUserSessions.bind(adminController));
     protectedAdmin.get('/projects', adminController.listProjects.bind(adminController));
+    protectedAdmin.get('/projects/:id', adminController.getProjectDetails.bind(adminController));
+    protectedAdmin.post('/projects/:id/archive', adminController.archiveProject.bind(adminController));
+    protectedAdmin.post('/projects/:id/restore', adminController.restoreProject.bind(adminController));
+    protectedAdmin.post('/projects/:id/snapshots', adminController.createProjectSnapshot.bind(adminController));
+
     protectedAdmin.get('/media', adminController.listMedia.bind(adminController));
+    protectedAdmin.get('/media/:id', adminController.getMediaDetails.bind(adminController));
+    protectedAdmin.post('/media/:id/retry', adminController.retryMediaProcessing.bind(adminController));
+    protectedAdmin.post('/media/:id/archive', adminController.archiveMedia.bind(adminController));
+    protectedAdmin.delete('/media/:id', adminController.deleteMedia.bind(adminController));
+    protectedAdmin.post('/media/:id/cleanup-orphaned', adminController.cleanupOrphanedMedia.bind(adminController));
     protectedAdmin.get('/comments', adminController.listComments.bind(adminController));
     protectedAdmin.get('/jobs', adminController.listJobs.bind(adminController));
     protectedAdmin.get('/ai/jobs', adminController.listAIJobs.bind(adminController));

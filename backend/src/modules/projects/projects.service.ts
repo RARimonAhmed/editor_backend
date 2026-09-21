@@ -121,7 +121,7 @@ export function enrichProjectForFlutter(doc: ProjectDocument): ProjectDocument {
 
 // In-memory repositories for test/mock resilience
 export const mockProjects = new Map<string, ProjectDocument>();
-const mockVersionHistory = new Map<string, ProjectVersionRecord[]>();
+export const mockVersionHistory = new Map<string, ProjectVersionRecord[]>();
 
 export class ProjectsService {
   // ============================================================================

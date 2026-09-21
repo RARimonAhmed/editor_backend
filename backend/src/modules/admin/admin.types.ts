@@ -92,12 +92,66 @@ export interface AdminProjectView {
   id: string;
   title: string;
   ownerId: string;
+  ownerName?: string;
+  ownerEmail?: string;
   status: string;
   version: number;
   durationSeconds: number;
   tracksCount: number;
+  estimatedSizeBytes: number;
+  assetCount: number;
+  resolution: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AdminProjectQueryParams {
+  search?: string;
+  owner?: string;
+  status?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  sizeCategory?: 'all' | 'small' | 'medium' | 'large';
+  sortBy?: 'created' | 'createdAt' | 'updated' | 'updatedAt' | 'title' | 'size' | 'version';
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminProjectDetailView {
+  project: AdminProjectView;
+  metadata: Record<string, any>;
+  versions: any[];
+  members: Array<{
+    userId: string;
+    role: string;
+    email?: string;
+    name?: string;
+    status: string;
+    invitedAt?: string;
+  }>;
+  permissions: Record<string, string[]>;
+  comments: AdminCommentView[];
+  assets: Array<{
+    id: string;
+    name: string;
+    category?: string;
+    fileSizeBytes: number;
+    fileKey?: string;
+    mimeType?: string;
+  }>;
+  activity: AdminAuditLogEntry[];
+  snapshots: Array<{
+    id: string;
+    name: string;
+    versionNumber: number;
+    description?: string;
+    createdAt: string;
+    createdBy: string;
+    createdByName?: string;
+  }>;
 }
 
 export interface AdminUsageReport {
@@ -204,16 +258,94 @@ export interface AdminSystemHealthReport {
 export interface AdminMediaView {
   id: string;
   userId: string;
+  ownerId?: string;
+  ownerName?: string;
+  ownerEmail?: string;
   name: string;
+  fileName?: string;
+  category: 'video' | 'audio' | 'image' | 'other';
   mimeType: string;
   fileSizeBytes: number;
   durationSeconds?: number;
   width?: number;
   height?: number;
+  resolution: string;
   status: string;
+  storageObject?: {
+    fileKey: string;
+    bucket: string;
+    driver: string;
+    exists: boolean;
+  };
   hasWaveform: boolean;
   hasThumbnail: boolean;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AdminMediaQueryParams {
+  search?: string;
+  category?: string;
+  status?: string;
+  owner?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  sortBy?: 'created' | 'createdAt' | 'size' | 'duration' | 'name';
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminMediaDetailView {
+  asset: AdminMediaView;
+  downloadUrl?: string;
+  metadata: Record<string, any>;
+  thumbnail: {
+    available: boolean;
+    exists?: boolean;
+    fileKey?: string;
+    url?: string;
+    strip?: any[];
+  };
+  waveform: {
+    available: boolean;
+    exists?: boolean;
+    fileKey?: string;
+    url?: string;
+    sampleCount?: number;
+  };
+  proxy: {
+    available: boolean;
+    exists?: boolean;
+    fileKey?: string;
+    url?: string;
+    resolution?: string;
+  };
+  processingJobs: Array<{
+    id: string;
+    type: string;
+    status: string;
+    attempts: number;
+    error?: string;
+    createdAt: string;
+  }>;
+  storage: {
+    bucket: string;
+    fileKey: string;
+    driver: string;
+    exists: boolean;
+    sizeBytes: number;
+    downloadUrl?: string;
+  };
+  checksum: {
+    algorithm?: string;
+    expected?: string;
+    sha256?: string;
+    md5?: string;
+  };
+  auditActivity: AdminAuditLogEntry[];
 }
 
 export interface AdminCommentView {

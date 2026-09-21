@@ -50,7 +50,7 @@ export const CommentsPage: React.FC = () => {
       header: 'Author / Editor',
       render: (c) => (
         <div>
-          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.authorName}</div>
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.authorName || 'Anonymous'}</div>
           <code style={{ fontSize: 10, color: 'var(--text-muted)' }}>{c.userId.slice(0, 10)}...</code>
         </div>
       ),
@@ -121,7 +121,7 @@ export const CommentsPage: React.FC = () => {
           searchPlaceholder="Search comments, author, project..."
           searchFilter={(c, q) =>
             c.text.toLowerCase().includes(q.toLowerCase()) ||
-            c.authorName.toLowerCase().includes(q.toLowerCase()) ||
+            (c.authorName || '').toLowerCase().includes(q.toLowerCase()) ||
             c.projectId.toLowerCase().includes(q.toLowerCase())
           }
         />

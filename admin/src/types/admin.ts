@@ -145,24 +145,81 @@ export interface PaginatedUsersResponse {
 export interface AdminProjectView {
   id: string;
   title: string;
-  userId: string;
-  ownerId?: string;
-  status?: string;
-  version?: number;
-  width: number;
-  height: number;
-  fps: number;
+  userId?: string;
+  ownerId: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  status: string;
+  version: number;
+  width?: number;
+  height?: number;
+  fps?: number;
   durationSeconds: number;
   tracksCount: number;
+  estimatedSizeBytes: number;
+  assetCount: number;
+  resolution: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PaginatedProjectsResponse {
+  projects: AdminProjectView[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface AdminProjectDetailView {
+  project: AdminProjectView;
+  metadata: Record<string, any>;
+  versions: Array<{
+    id: string;
+    versionNumber: number;
+    changeSummary: string;
+    isAutoSave: boolean;
+    deviceName?: string;
+    createdAt: string;
+  }>;
+  members: Array<{
+    userId: string;
+    role: string;
+    name?: string;
+    email?: string;
+    status: string;
+    invitedAt?: string;
+  }>;
+  permissions: Record<string, string[]>;
+  comments: AdminCommentView[];
+  assets: Array<{
+    id: string;
+    name: string;
+    category?: string;
+    fileSizeBytes: number;
+    fileKey?: string;
+    mimeType?: string;
+  }>;
+  activity: AdminAuditLogEntry[];
+  snapshots: Array<{
+    id: string;
+    name: string;
+    versionNumber: number;
+    description?: string;
+    createdAt: string;
+    createdBy: string;
+    createdByName?: string;
+  }>;
 }
 
 export interface AdminMediaView {
   id: string;
   userId: string;
+  ownerId?: string;
+  ownerName?: string;
+  ownerEmail?: string;
   projectId?: string;
-  name?: string;
+  name: string;
   fileName: string;
   fileSizeBytes: number;
   mimeType: string;
@@ -170,20 +227,87 @@ export interface AdminMediaView {
   durationSeconds?: number;
   width?: number;
   height?: number;
+  resolution?: string;
   status: string;
+  storageObject?: {
+    fileKey: string;
+    bucket: string;
+    driver: string;
+    exists: boolean;
+  };
   hasWaveform?: boolean;
   hasThumbnail?: boolean;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface PaginatedMediaResponse {
+  media: AdminMediaView[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface AdminMediaDetailView {
+  asset: AdminMediaView;
+  downloadUrl?: string;
+  metadata: Record<string, any>;
+  thumbnail: {
+    available: boolean;
+    exists?: boolean;
+    fileKey?: string;
+    url?: string;
+    strip?: any[];
+  };
+  waveform: {
+    available: boolean;
+    exists?: boolean;
+    fileKey?: string;
+    url?: string;
+    sampleCount?: number;
+  };
+  proxy: {
+    available: boolean;
+    exists?: boolean;
+    fileKey?: string;
+    url?: string;
+    resolution?: string;
+  };
+  processingJobs: Array<{
+    id: string;
+    type: string;
+    status: string;
+    attempts: number;
+    error?: string;
+    createdAt: string;
+  }>;
+  storage: {
+    bucket: string;
+    fileKey: string;
+    driver: string;
+    exists: boolean;
+    sizeBytes: number;
+    downloadUrl?: string;
+  };
+  checksum: {
+    algorithm?: string;
+    expected?: string;
+    sha256?: string;
+    md5?: string;
+  };
+  auditActivity: AdminAuditLogEntry[];
 }
 
 export interface AdminCommentView {
   id: string;
   projectId: string;
   userId: string;
-  authorName: string;
+  authorName?: string;
   text: string;
   timecodeSeconds?: number;
   trackId?: string;
+  resolved?: boolean;
   createdAt: string;
 }
 

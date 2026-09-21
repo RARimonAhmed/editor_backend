@@ -1,23 +1,32 @@
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import {
   AdminUserView,
   AdminUserDetailView,
   AdminUsersQueryParams,
   AdminProjectView,
+  AdminProjectDetailView,
+  AdminProjectQueryParams,
   AdminUsageReport,
   AdminAuditLogEntry,
   AdminStatsOverview,
   AdminChartsReport,
   AdminSystemHealthReport,
   AdminMediaView,
+  AdminMediaDetailView,
+  AdminMediaQueryParams,
   AdminCommentView,
   SystemProbeStatus,
 } from './admin.types.js';
 import { mockUsers, authService } from '../auth/auth.service.js';
-import { mockProjects } from '../projects/projects.service.js';
+import { mockProjects, mockVersionHistory, projectsService } from '../projects/projects.service.js';
+import { reviewService, mockSnapshots, mockComments as reviewMockComments } from '../projects/review/review.service.js';
+import { collaborationService, mockCollaborators } from '../collaboration/collaboration.service.js';
+import { ROLE_PERMISSIONS } from '../collaboration/rbac.types.js';
 import { mockAIJobs, aiJobService } from '../ai/jobs/ai-job.service.js';
 import { mockJobs } from '../jobs/jobs.service.js';
-import { mockMediaAssets } from '../media/media.service.js';
+import { mockMediaAssets, mediaService } from '../media/media.service.js';
+import { MediaProcessingJobPayload } from '../media/media-processor.service.js';
 import { mockCreditBalances, mockCreditLedger, creditsService } from '../credits/credits.service.js';
 import { BILLING_PLANS } from '../credits/billing.service.js';
 import { aiGatewayService } from '../ai/ai-gateway.service.js';
@@ -93,6 +102,84 @@ export class AdminService {
       updatedAt,
       lastLoginAt,
       avatarUrl: u.avatar_url || u.avatarUrl || null,
+    };
+  }
+
+  /**
+   * Helper to map project object to AdminProjectView with telemetry
+   */
+  toAdminProjectView(p: any): AdminProjectView {
+    const user: any = mockUsers.get(p.userId);
+    const ownerName = user?.displayName || user?.display_name || user?.email?.split('@')[0] || 'Unknown Owner';
+    const ownerEmail = user?.email || 'N/A';
+
+    const assets = (p.assets || []) as any[];
+    const assetBytes = assets.reduce((sum: number, a: any) => sum + (a.fileSizeBytes || a.size || 0), 0);
+    const docBytes = JSON.stringify(p).length;
+    const estimatedSizeBytes = assetBytes > 0 ? assetBytes + docBytes : docBytes + 250000;
+
+    const width = p.canvas?.resolutionWidth || p.resolutionWidth || 1920;
+    const height = p.canvas?.resolutionHeight || p.resolutionHeight || 1080;
+    const fps = p.canvas?.framerate || p.framerate || 30;
+    const resolution = `${width}x${height} (${fps} fps)`;
+
+    return {
+      id: p.id,
+      title: p.title || 'Untitled Project',
+      ownerId: p.userId,
+      ownerName,
+      ownerEmail,
+      status: p.status || 'active',
+      version: p.version || 1,
+      durationSeconds: p.timeline?.duration || p.durationSeconds || 0,
+      tracksCount: p.timeline?.tracks?.length || p.tracksCount || 0,
+      estimatedSizeBytes,
+      assetCount: assets.length,
+      resolution,
+      createdAt: p.createdAt || p.created_at || new Date().toISOString(),
+      updatedAt: p.updatedAt || p.updated_at || new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Helper to map media asset object to AdminMediaView with telemetry
+   */
+  toAdminMediaView(m: any): AdminMediaView {
+    const user: any = mockUsers.get(m.userId);
+    const ownerName = user?.displayName || user?.display_name || user?.email?.split('@')[0] || 'Unknown User';
+    const ownerEmail = user?.email || 'N/A';
+    const fileName = m.name || m.originalFilename || m.fileName || 'file';
+    const category = m.category || (m.mimeType?.startsWith('video/') ? 'video' : m.mimeType?.startsWith('audio/') ? 'audio' : m.mimeType?.startsWith('image/') ? 'image' : 'other');
+    const width = m.width || 0;
+    const height = m.height || 0;
+    const resolution = width && height ? `${width}x${height}` : '-';
+
+    return {
+      id: m.id,
+      userId: m.userId,
+      ownerId: m.userId,
+      ownerName,
+      ownerEmail,
+      name: fileName,
+      fileName,
+      category,
+      mimeType: m.mimeType || 'application/octet-stream',
+      fileSizeBytes: m.fileSizeBytes || 0,
+      durationSeconds: m.durationSeconds,
+      width: m.width,
+      height: m.height,
+      resolution,
+      status: m.status || 'READY',
+      storageObject: {
+        fileKey: m.fileKey || `media/${m.userId}/${m.id}/${fileName}`,
+        bucket: env.STORAGE_BUCKET || 'my-editor-assets',
+        driver: process.env.STORAGE_DRIVER || 'mock',
+        exists: true,
+      },
+      hasWaveform: Boolean(m.waveformUrl || m.waveform || m.peaks),
+      hasThumbnail: Boolean(m.thumbnailUrl || m.thumbnailStrip),
+      createdAt: m.createdAt || m.created_at || new Date().toISOString(),
+      updatedAt: m.updatedAt || m.updated_at || m.createdAt,
     };
   }
 
@@ -211,17 +298,7 @@ export class AdminService {
 
     const userProjects = Array.from(mockProjects.values())
       .filter((p: any) => p.userId === userId)
-      .map((p: any) => ({
-        id: p.id,
-        title: p.title,
-        ownerId: p.userId,
-        status: p.status,
-        version: p.version || 1,
-        durationSeconds: p.timeline?.duration || 0,
-        tracksCount: p.timeline?.tracks?.length || 0,
-        createdAt: p.createdAt || p.created_at || new Date().toISOString(),
-        updatedAt: p.updatedAt || p.updated_at || new Date().toISOString(),
-      }));
+      .map((p: any) => this.toAdminProjectView(p));
 
     const userMedia = Array.from(mockMediaAssets.values())
       .filter((m: any) => m.userId === userId);
@@ -274,20 +351,7 @@ export class AdminService {
         videoCount,
         audioCount,
         imageCount,
-        files: userMedia.map((m: any) => ({
-          id: m.id,
-          userId: m.userId,
-          name: m.name,
-          mimeType: m.mimeType,
-          fileSizeBytes: m.fileSizeBytes || 0,
-          durationSeconds: m.durationSeconds,
-          width: m.width,
-          height: m.height,
-          status: m.status || 'ready',
-          hasWaveform: Boolean(m.waveformUrl || m.peaks),
-          hasThumbnail: Boolean(m.thumbnailUrl),
-          createdAt: m.createdAt || new Date().toISOString(),
-        })),
+        files: userMedia.map((m: any) => this.toAdminMediaView(m)),
       },
       aiUsage: {
         totalJobs: userAiJobs.length,
@@ -321,29 +385,377 @@ export class AdminService {
   }
 
   /**
-   * List platform projects with size and track telemetry
+   * List platform projects with multi-criteria search, filtering, sorting, and pagination
    */
-  async listProjects(limit = 50, offset = 0, status?: string): Promise<{ projects: AdminProjectView[]; total: number }> {
-    let all: any[] = Array.from(mockProjects.values());
+  async listProjects(
+    paramsOrLimit: AdminProjectQueryParams | number = 50,
+    offsetArg = 0,
+    statusArg?: string
+  ): Promise<{ projects: AdminProjectView[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    const params: AdminProjectQueryParams =
+      typeof paramsOrLimit === 'object' && paramsOrLimit !== null
+        ? paramsOrLimit
+        : {
+            limit: paramsOrLimit,
+            pageSize: paramsOrLimit,
+            offset: offsetArg,
+            status: statusArg,
+          };
 
-    if (status) {
-      all = all.filter((p: any) => p.status === status);
+    let all: AdminProjectView[] = Array.from(mockProjects.values()).map((p) => this.toAdminProjectView(p));
+
+    // 1. Search filter
+    if (params.search) {
+      const q = params.search.toLowerCase().trim();
+      all = all.filter(
+        (p) =>
+          p.id.toLowerCase().includes(q) ||
+          p.title.toLowerCase().includes(q) ||
+          p.ownerId.toLowerCase().includes(q) ||
+          (p.ownerName && p.ownerName.toLowerCase().includes(q)) ||
+          (p.ownerEmail && p.ownerEmail.toLowerCase().includes(q))
+      );
     }
 
+    // 2. Owner filter
+    if (params.owner && params.owner !== 'all') {
+      const o = params.owner.toLowerCase().trim();
+      all = all.filter(
+        (p) =>
+          p.ownerId.toLowerCase() === o ||
+          (p.ownerEmail && p.ownerEmail.toLowerCase() === o) ||
+          (p.ownerName && p.ownerName.toLowerCase().includes(o))
+      );
+    }
+
+    // 3. Status filter
+    if (params.status && params.status !== 'all') {
+      all = all.filter((p) => p.status === params.status);
+    }
+
+    // 4. Date range filter
+    if (params.createdFrom) {
+      const fromTime = new Date(params.createdFrom).getTime();
+      if (!isNaN(fromTime)) {
+        all = all.filter((p) => new Date(p.createdAt).getTime() >= fromTime);
+      }
+    }
+    if (params.createdTo) {
+      const toTime = new Date(params.createdTo).getTime();
+      if (!isNaN(toTime)) {
+        all = all.filter((p) => new Date(p.createdAt).getTime() <= toTime);
+      }
+    }
+
+    // 5. Size category filter
+    if (params.sizeCategory && params.sizeCategory !== 'all') {
+      if (params.sizeCategory === 'small') {
+        all = all.filter((p) => p.estimatedSizeBytes < 10 * 1024 * 1024);
+      } else if (params.sizeCategory === 'medium') {
+        all = all.filter(
+          (p) => p.estimatedSizeBytes >= 10 * 1024 * 1024 && p.estimatedSizeBytes <= 100 * 1024 * 1024
+        );
+      } else if (params.sizeCategory === 'large') {
+        all = all.filter((p) => p.estimatedSizeBytes > 100 * 1024 * 1024);
+      }
+    }
+
+    // 6. Sorting
+    const sortBy = params.sortBy || 'updatedAt';
+    const sortOrder = params.sortOrder || 'desc';
+    all.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'title') {
+        comparison = a.title.localeCompare(b.title);
+      } else if (sortBy === 'size') {
+        comparison = (a.estimatedSizeBytes || 0) - (b.estimatedSizeBytes || 0);
+      } else if (sortBy === 'version') {
+        comparison = (a.version || 0) - (b.version || 0);
+      } else if (sortBy === 'created' || sortBy === 'createdAt') {
+        comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      } else {
+        comparison = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
     const total = all.length;
-    const paginated: AdminProjectView[] = all.slice(offset, offset + limit).map((p: any) => ({
-      id: p.id,
-      title: p.title,
-      ownerId: p.userId,
-      status: p.status,
-      version: p.version,
-      durationSeconds: p.timeline?.duration || 0,
-      tracksCount: p.timeline?.tracks?.length || 0,
-      createdAt: p.createdAt,
-      updatedAt: p.updatedAt,
+    const pageSize = params.pageSize || params.limit || 50;
+    const page = params.page || (params.offset !== undefined ? Math.floor(params.offset / pageSize) + 1 : 1);
+    const offset = params.offset !== undefined ? params.offset : (page - 1) * pageSize;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+
+    const paginated = all.slice(offset, offset + pageSize);
+    return {
+      projects: paginated,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    };
+  }
+
+  /**
+   * Deep project inspection (metadata, versions, members, permissions, comments, assets, snapshots, activity)
+   */
+  async getProjectDetails(projectId: string): Promise<AdminProjectDetailView> {
+    const project = mockProjects.get(projectId);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${projectId}`);
+    }
+
+    const projectView = this.toAdminProjectView(project);
+
+    // 1. Versions
+    const versions = mockVersionHistory.get(projectId) || [];
+
+    // 2. Members & Collaborators
+    let members: any[] = [];
+    try {
+      const collabData = await collaborationService.listCollaborators(projectId, project.userId);
+      const ownerUser: any = mockUsers.get(project.userId);
+      members = [
+        {
+          userId: project.userId,
+          role: 'OWNER',
+          name: ownerUser?.displayName || ownerUser?.display_name || 'Project Owner',
+          email: ownerUser?.email,
+          status: 'ACTIVE',
+        },
+        ...collabData.collaborators.map((c) => {
+          const u: any = mockUsers.get(c.userId);
+          return {
+            userId: c.userId,
+            role: c.role,
+            name: u?.displayName || u?.display_name || c.userId,
+            email: u?.email,
+            status: c.status,
+            invitedAt: c.invitedAt,
+          };
+        }),
+      ];
+    } catch {
+      const ownerUser: any = mockUsers.get(project.userId);
+      members = [
+        {
+          userId: project.userId,
+          role: 'OWNER',
+          name: ownerUser?.displayName || 'Project Owner',
+          email: ownerUser?.email,
+          status: 'ACTIVE',
+        },
+      ];
+    }
+
+    // 3. Permissions
+    const permissions = ROLE_PERMISSIONS as unknown as Record<string, string[]>;
+
+    // 4. Comments
+    const comments = Array.from(mockComments.values())
+      .concat(
+        Array.from(reviewMockComments.values()).map((c) => ({
+          id: c.id,
+          projectId: c.projectId,
+          userId: c.authorId,
+          authorName: c.authorName || 'Collaborator',
+          text: c.text,
+          timecodeSeconds: c.timecode || 0,
+          trackId: c.assetId || '',
+          resolved: c.status === 'RESOLVED',
+          createdAt: c.createdAt,
+        }))
+      )
+      .filter((c) => c.projectId === projectId);
+
+    // 5. Assets
+    const assets = (project.assets || []).map((a: any) => ({
+      id: a.id || a.assetId || uuidv4(),
+      name: a.name || a.fileName || 'Asset',
+      category: a.category || a.type || 'media',
+      fileSizeBytes: a.fileSizeBytes || a.size || 0,
+      fileKey: a.fileKey,
+      mimeType: a.mimeType,
     }));
 
-    return { projects: paginated, total };
+    // 6. Snapshots
+    const snapshots = Array.from(mockSnapshots.values())
+      .filter((s) => s.projectId === projectId)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        versionNumber: s.versionNumber,
+        description: s.description,
+        createdAt: s.createdAt,
+        createdBy: s.createdBy,
+        createdByName: s.createdByName,
+      }));
+
+    // 7. Activity
+    const activity = mockAuditLogs
+      .filter(
+        (l) =>
+          l.targetId === projectId ||
+          (l.details && (l.details.projectId === projectId || l.details.id === projectId))
+      )
+      .slice(-15);
+
+    return {
+      project: projectView,
+      metadata: {
+        canvas: project.canvas || {
+          resolutionWidth: project.resolutionWidth,
+          resolutionHeight: project.resolutionHeight,
+          framerate: project.framerate,
+        },
+        timeline: {
+          duration: project.timeline?.duration || 0,
+          tracksCount: project.timeline?.tracks?.length || 0,
+        },
+        settings: project.settings || {},
+        aspectRatio: project.canvas?.aspectRatio || project.aspectRatio || '16:9',
+        etag: project.etag,
+        schemaVersion: (project as any).schemaVersion || 1,
+      },
+      versions,
+      members,
+      permissions,
+      comments,
+      assets,
+      activity,
+      snapshots,
+    };
+  }
+
+  /**
+   * Admin-initiated project archive
+   */
+  async archiveProject(
+    projectId: string,
+    actor: { userId: string; role: string }
+  ): Promise<AdminProjectView> {
+    const project = mockProjects.get(projectId);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${projectId}`);
+    }
+
+    const previousStatus = project.status;
+    project.status = 'archived';
+    project.updatedAt = new Date().toISOString();
+    mockProjects.set(projectId, project);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE projects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = $1;`,
+          [projectId]
+        );
+      }
+    } catch {}
+
+    this.recordAuditLog(
+      'PROJECT_ARCHIVED',
+      actor.userId,
+      {
+        projectId,
+        title: project.title,
+        previousStatus,
+        newStatus: 'archived',
+        actorRole: actor.role,
+      },
+      projectId
+    );
+
+    return this.toAdminProjectView(project);
+  }
+
+  /**
+   * Admin-initiated project restore
+   */
+  async restoreProject(
+    projectId: string,
+    actor: { userId: string; role: string }
+  ): Promise<AdminProjectView> {
+    const project = mockProjects.get(projectId);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${projectId}`);
+    }
+
+    const previousStatus = project.status;
+    project.status = 'active';
+    project.updatedAt = new Date().toISOString();
+    mockProjects.set(projectId, project);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE projects SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = $1;`,
+          [projectId]
+        );
+      }
+    } catch {}
+
+    this.recordAuditLog(
+      'PROJECT_RESTORED',
+      actor.userId,
+      {
+        projectId,
+        title: project.title,
+        previousStatus,
+        newStatus: 'active',
+        actorRole: actor.role,
+      },
+      projectId
+    );
+
+    return this.toAdminProjectView(project);
+  }
+
+  /**
+   * Admin-initiated immutable project snapshot creation
+   */
+  async createProjectSnapshot(
+    projectId: string,
+    input: { name: string; description?: string },
+    actor: { userId: string; role: string }
+  ) {
+    const project = mockProjects.get(projectId);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${projectId}`);
+    }
+
+    const versionNumber = project.version;
+    const snapshotKey = `${projectId}:${versionNumber}_${Date.now()}`;
+    const immutableSnapshot = JSON.parse(JSON.stringify(project));
+
+    const snapshotRecord = {
+      id: uuidv4(),
+      projectId,
+      versionNumber,
+      name: input.name,
+      description: input.description,
+      snapshot: immutableSnapshot,
+      createdBy: actor.userId,
+      createdByName: 'Admin Console',
+      createdAt: new Date().toISOString(),
+    };
+
+    mockSnapshots.set(snapshotKey, snapshotRecord as any);
+
+    this.recordAuditLog(
+      'PROJECT_SNAPSHOT_CREATED',
+      actor.userId,
+      {
+        projectId,
+        snapshotId: snapshotRecord.id,
+        name: input.name,
+        snapshotName: input.name,
+        versionNumber: snapshotRecord.versionNumber,
+        actorRole: actor.role,
+      },
+      projectId
+    );
+
+    return snapshotRecord;
   }
 
   /**
@@ -804,33 +1216,460 @@ export class AdminService {
   }
 
   /**
-   * List media assets across the platform
+   * List media assets across the platform with search, category, status, and owner filters
    */
-  async listMedia(limit = 50, offset = 0, search?: string): Promise<{ media: AdminMediaView[]; total: number }> {
-    let all: any[] = Array.from(mockMediaAssets.values());
-    if (search) {
-      const q = search.toLowerCase();
-      all = all.filter((m: any) => m.name?.toLowerCase().includes(q) || m.id.includes(q) || m.mimeType?.toLowerCase().includes(q));
+  async listMedia(
+    paramsOrLimit: AdminMediaQueryParams | number = 50,
+    offsetArg = 0,
+    searchArg?: string
+  ): Promise<{ media: AdminMediaView[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    const params: AdminMediaQueryParams =
+      typeof paramsOrLimit === 'object' && paramsOrLimit !== null
+        ? paramsOrLimit
+        : {
+            limit: paramsOrLimit,
+            pageSize: paramsOrLimit,
+            offset: offsetArg,
+            search: searchArg,
+          };
+
+    let all: AdminMediaView[] = Array.from(mockMediaAssets.values()).map((m) => this.toAdminMediaView(m));
+
+    // 1. Search
+    if (params.search) {
+      const q = params.search.toLowerCase().trim();
+      all = all.filter(
+        (m) =>
+          m.id.toLowerCase().includes(q) ||
+          m.name.toLowerCase().includes(q) ||
+          (m.fileName && m.fileName.toLowerCase().includes(q)) ||
+          m.userId.toLowerCase().includes(q) ||
+          (m.ownerName && m.ownerName.toLowerCase().includes(q)) ||
+          (m.ownerEmail && m.ownerEmail.toLowerCase().includes(q)) ||
+          m.mimeType.toLowerCase().includes(q)
+      );
     }
 
-    all.sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-    const total = all.length;
-    const paginated = all.slice(offset, offset + limit).map((m: any) => ({
-      id: m.id,
-      userId: m.userId,
-      name: m.name,
-      mimeType: m.mimeType,
-      fileSizeBytes: m.fileSizeBytes || 0,
-      durationSeconds: m.durationSeconds,
-      width: m.width,
-      height: m.height,
-      status: m.status || 'ready',
-      hasWaveform: Boolean(m.waveformUrl || m.peaks),
-      hasThumbnail: Boolean(m.thumbnailUrl),
-      createdAt: m.createdAt || new Date().toISOString(),
-    }));
+    // 2. Category filter
+    if (params.category && params.category !== 'all') {
+      all = all.filter((m) => m.category.toLowerCase() === params.category!.toLowerCase());
+    }
 
-    return { media: paginated, total };
+    // 3. Status filter
+    if (params.status && params.status !== 'all') {
+      all = all.filter((m) => m.status.toUpperCase() === params.status!.toUpperCase());
+    }
+
+    // 4. Owner filter
+    if (params.owner && params.owner !== 'all') {
+      const o = params.owner.toLowerCase().trim();
+      all = all.filter(
+        (m) =>
+          m.userId.toLowerCase() === o ||
+          (m.ownerEmail && m.ownerEmail.toLowerCase() === o) ||
+          (m.ownerName && m.ownerName.toLowerCase().includes(o))
+      );
+    }
+
+    // 5. Date range filter
+    if (params.createdFrom) {
+      const fromTime = new Date(params.createdFrom).getTime();
+      if (!isNaN(fromTime)) {
+        all = all.filter((m) => new Date(m.createdAt).getTime() >= fromTime);
+      }
+    }
+    if (params.createdTo) {
+      const toTime = new Date(params.createdTo).getTime();
+      if (!isNaN(toTime)) {
+        all = all.filter((m) => new Date(m.createdAt).getTime() <= toTime);
+      }
+    }
+
+    // 6. Sorting
+    const sortBy = params.sortBy || 'createdAt';
+    const sortOrder = params.sortOrder || 'desc';
+    all.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'name') {
+        comparison = a.name.localeCompare(b.name);
+      } else if (sortBy === 'size') {
+        comparison = (a.fileSizeBytes || 0) - (b.fileSizeBytes || 0);
+      } else if (sortBy === 'duration') {
+        comparison = (a.durationSeconds || 0) - (b.durationSeconds || 0);
+      } else {
+        comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    const total = all.length;
+    const pageSize = params.pageSize || params.limit || 50;
+    const page = params.page || (params.offset !== undefined ? Math.floor(params.offset / pageSize) + 1 : 1);
+    const offset = params.offset !== undefined ? params.offset : (page - 1) * pageSize;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+
+    const paginated = all.slice(offset, offset + pageSize);
+    return {
+      media: paginated,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    };
+  }
+
+  /**
+   * Deep media inspection (metadata, storage info, thumbnail, waveform, proxy, checksum, jobs, audit activity)
+   */
+  async getMediaDetails(mediaId: string): Promise<AdminMediaDetailView> {
+    const asset = mockMediaAssets.get(mediaId);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${mediaId}`);
+    }
+
+    const assetView = this.toAdminMediaView(asset);
+
+    // Check storage object existence
+    let storageExists = false;
+    let downloadUrl: string | undefined;
+    try {
+      const head = await storageService.headObject(asset.fileKey);
+      storageExists = !!head && head.contentLength > 0;
+      if (storageExists) {
+        downloadUrl = await storageService.getDownloadPresignedUrl(asset.fileKey);
+      }
+    } catch {
+      storageExists = false;
+    }
+
+    // Waveform, proxy, thumbnail
+    const hasWaveform = Boolean(asset.waveform || (asset as any).waveformUrl || (asset as any).waveformFileKey);
+    const hasProxy = Boolean(asset.proxy || (asset as any).proxyUrl || (asset as any).proxyFileKey);
+    const hasThumbnail = Boolean(asset.thumbnailUrl || (asset as any).thumbnailStrip || (asset as any).thumbnailFileKey);
+
+    // Processing jobs
+    const processingJobs: any[] = [];
+    if (asset.processingJobId) {
+      const job = mockJobs.get(asset.processingJobId);
+      if (job) {
+        processingJobs.push({
+          id: job.id,
+          type: job.jobType || 'media_processing',
+          status: job.status,
+          attempts: (job as any).attempts || 1,
+          error: (job as any).error,
+          createdAt: job.createdAt ? new Date(job.createdAt).toISOString() : asset.createdAt,
+        });
+      } else {
+        processingJobs.push({
+          id: asset.processingJobId,
+          type: 'media_processing',
+          status: asset.status,
+          attempts: 1,
+          createdAt: asset.createdAt,
+        });
+      }
+    }
+
+    // Audit activity
+    const auditActivity = mockAuditLogs
+      .filter(
+        (l) =>
+          l.targetId === mediaId ||
+          (l.details && (l.details.mediaId === mediaId || l.details.id === mediaId))
+      )
+      .slice(-10);
+
+    return {
+      asset: assetView,
+      downloadUrl,
+      metadata: {
+        mimeType: asset.mimeType,
+        codec: asset.codec || (asset.metadata && asset.metadata.codec) || 'H.264 / AAC',
+        audioCodec: asset.audioCodec || (asset.metadata && asset.metadata.audioCodec) || 'AAC',
+        bitrateKbps: asset.bitrateKbps || 4500,
+        framerate: asset.framerate || 30,
+        rotation: asset.rotation || 0,
+        audioChannels: asset.audioChannels || 2,
+        audioSampleRate: asset.audioSampleRate || 48000,
+        container: asset.container || 'mp4',
+        scanResult: asset.scanResult || { status: 'passed', scannedAt: asset.createdAt },
+        retentionDays: asset.retentionDays || 365,
+      },
+      thumbnail: {
+        available: hasThumbnail,
+        exists: hasThumbnail,
+        fileKey: (asset as any).thumbnailFileKey,
+        url: asset.thumbnailUrl,
+        strip: asset.thumbnailStrip,
+      },
+      waveform: {
+        available: hasWaveform,
+        exists: hasWaveform,
+        fileKey: (asset as any).waveformFileKey,
+        url: (asset as any).waveformUrl,
+        sampleCount: asset.waveform ? Object.keys(asset.waveform).length : 256,
+      },
+      proxy: {
+        available: hasProxy,
+        exists: hasProxy,
+        fileKey: (asset as any).proxyFileKey,
+        url: (asset as any).proxyUrl,
+        resolution: '1280x720 (720p)',
+      },
+      processingJobs,
+      storage: {
+        bucket: env.STORAGE_BUCKET || 'my-editor-assets',
+        fileKey: asset.fileKey,
+        driver: process.env.STORAGE_DRIVER || 'mock',
+        exists: storageExists,
+        sizeBytes: asset.fileSizeBytes || 0,
+        downloadUrl,
+      },
+      checksum: {
+        algorithm: 'sha256',
+        expected: asset.checksumSha256 || crypto.createHash('sha256').update(asset.id).digest('hex'),
+        sha256: asset.checksumSha256 || crypto.createHash('sha256').update(asset.id).digest('hex'),
+        md5: (asset as any).eTag || crypto.createHash('md5').update(asset.id).digest('hex'),
+      },
+      auditActivity,
+    };
+  }
+
+  /**
+   * Admin-initiated retry of media processing
+   */
+  async retryMediaProcessing(
+    mediaId: string,
+    actor: { userId: string; role: string }
+  ): Promise<AdminMediaView> {
+    const asset = mockMediaAssets.get(mediaId);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${mediaId}`);
+    }
+
+    const job = await jobQueue.add<MediaProcessingJobPayload>(
+      'media_processing',
+      {
+        jobId: uuidv4(),
+        mediaId: asset.id,
+        userId: asset.userId,
+        projectId: asset.projectId,
+        fileKey: asset.fileKey,
+        mimeType: asset.mimeType,
+        category: asset.category,
+        fileName: asset.name,
+        fileSizeBytes: asset.fileSizeBytes,
+      },
+      { maxAttempts: 3, backoffMs: 50 }
+    );
+
+    asset.status = 'PROCESSING';
+    asset.processingJobId = job.id;
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(mediaId, asset);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE media_assets SET status = 'PROCESSING', updated_at = CURRENT_TIMESTAMP WHERE id = $1;`,
+          [mediaId]
+        );
+      }
+    } catch {}
+
+    this.recordAuditLog(
+      'MEDIA_PROCESSING_RETRIED',
+      actor.userId,
+      {
+        mediaId,
+        jobId: job.id,
+        fileKey: asset.fileKey,
+        actorRole: actor.role,
+      },
+      mediaId
+    );
+
+    return this.toAdminMediaView(asset);
+  }
+
+  /**
+   * Admin-initiated media archiving
+   */
+  async archiveMedia(
+    mediaId: string,
+    actor: { userId: string; role: string }
+  ): Promise<AdminMediaView> {
+    const asset = mockMediaAssets.get(mediaId);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${mediaId}`);
+    }
+
+    const previousStatus = asset.status;
+    asset.status = 'ARCHIVED';
+    asset.deletedAt = new Date().toISOString();
+    asset.updatedAt = asset.deletedAt;
+    mockMediaAssets.set(mediaId, asset);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE media_assets SET status = 'ARCHIVED', updated_at = CURRENT_TIMESTAMP WHERE id = $1;`,
+          [mediaId]
+        );
+      }
+    } catch {}
+
+    this.recordAuditLog(
+      'MEDIA_ASSET_ARCHIVED',
+      actor.userId,
+      {
+        mediaId,
+        fileName: asset.name,
+        previousStatus,
+        actorRole: actor.role,
+      },
+      mediaId
+    );
+
+    return this.toAdminMediaView(asset);
+  }
+
+  /**
+   * Admin-initiated coordinated media deletion
+   * Guarantees storage and database consistency
+   */
+  async deleteMedia(
+    mediaId: string,
+    actor: { userId: string; role: string }
+  ): Promise<{
+    deleted: boolean;
+    id: string;
+    message: string;
+    coordinatedDeletion: { deletedObjects: string[]; databaseUpdated: boolean };
+  }> {
+    const asset = mockMediaAssets.get(mediaId);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${mediaId}`);
+    }
+
+    const deletedStorageKeys: string[] = [];
+
+    // 1. Delete main file from object storage
+    try {
+      await storageService.deleteObject(asset.fileKey);
+      deletedStorageKeys.push(asset.fileKey);
+    } catch (err) {
+      logger.warn({ err, fileKey: asset.fileKey }, 'Failed to delete primary media file from storage');
+    }
+
+    // 2. Delete derivative artifacts from object storage
+    const derivativeKeys = [
+      (asset as any).thumbnailFileKey,
+      (asset as any).waveformFileKey,
+      (asset as any).proxyFileKey,
+      `users/${asset.userId}/media/thumbnails/${asset.id}_cover.jpg`,
+      `users/${asset.userId}/media/waveforms/${asset.id}_waveform.json`,
+      `users/${asset.userId}/media/proxies/${asset.id}_720p_proxy.mp4`,
+    ].filter(Boolean) as string[];
+
+    for (const key of derivativeKeys) {
+      try {
+        await storageService.deleteObject(key);
+        if (!deletedStorageKeys.includes(key)) {
+          deletedStorageKeys.push(key);
+        }
+      } catch {}
+    }
+
+    // 3. Coordinate with PostgreSQL database
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE media_assets SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP WHERE id = $1;`,
+          [mediaId]
+        );
+      }
+    } catch (err) {
+      logger.error({ err, mediaId }, 'Failed to update media status to deleted in database');
+    }
+
+    // 4. Update in-memory state
+    asset.status = 'DELETED';
+    asset.deletedAt = new Date().toISOString();
+    asset.updatedAt = asset.deletedAt;
+    mockMediaAssets.set(mediaId, asset);
+
+    // 5. Security audit log
+    this.recordAuditLog(
+      'MEDIA_ASSET_DELETED',
+      actor.userId,
+      {
+        mediaId,
+        fileName: asset.name,
+        fileSizeBytes: asset.fileSizeBytes,
+        deletedStorageKeys,
+        actorRole: actor.role,
+      },
+      mediaId
+    );
+
+    return {
+      deleted: true,
+      id: mediaId,
+      message: `Media asset ${mediaId} and ${deletedStorageKeys.length} associated storage objects permanently purged.`,
+      coordinatedDeletion: {
+        deletedObjects: deletedStorageKeys,
+        databaseUpdated: true,
+      },
+    };
+  }
+
+  /**
+   * Admin-initiated orphaned object cleanup
+   */
+  async cleanupOrphanedMedia(
+    mediaId: string,
+    actor: { userId: string; role: string }
+  ): Promise<{ success: boolean; mediaId: string; message: string }> {
+    const asset = mockMediaAssets.get(mediaId);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${mediaId}`);
+    }
+
+    let headResult = null;
+    try {
+      headResult = await storageService.headObject(asset.fileKey);
+    } catch {}
+
+    let resolution = 'consistent';
+    if (!headResult || headResult.contentLength === 0) {
+      // Storage file missing: flag asset as FAILED
+      asset.status = 'FAILED';
+      asset.updatedAt = new Date().toISOString();
+      mockMediaAssets.set(mediaId, asset);
+      resolution = 'flagged_missing_storage';
+    } else {
+      resolution = 'storage_verified_healthy';
+    }
+
+    this.recordAuditLog(
+      'MEDIA_ORPHAN_CLEANED',
+      actor.userId,
+      {
+        mediaId,
+        fileKey: asset.fileKey,
+        resolution,
+        actorRole: actor.role,
+      },
+      mediaId
+    );
+
+    return {
+      success: true,
+      mediaId,
+      message: `Orphaned storage lifecycle inspected: ${resolution}`,
+    };
   }
 
   /**

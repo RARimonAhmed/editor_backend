@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export type MediaCategory = 'video' | 'audio' | 'image' | 'font' | 'lut' | 'sticker' | 'template';
 
-export type MediaLifecycleStatus = 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED' | 'DELETED';
+export type MediaLifecycleStatus = 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED' | 'DELETED' | 'ARCHIVED';
 
 // Maximum size quotas per category
 export const MEDIA_SIZE_LIMITS: Record<MediaCategory, number> = {

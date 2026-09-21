@@ -35,12 +35,54 @@ export class AdminController {
   }
 
   async listProjects(request: FastifyRequest, reply: FastifyReply) {
-    const query = request.query as { limit?: string; offset?: string; status?: string };
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
-    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : undefined;
+    const offset = query.offset ? parseInt(query.offset, 10) : undefined;
 
-    const result = await adminService.listProjects(limit, offset, query.status);
+    const result = await adminService.listProjects({
+      search: query.search,
+      owner: query.owner,
+      status: query.status,
+      createdFrom: query.createdFrom,
+      createdTo: query.createdTo,
+      sizeCategory: query.sizeCategory as any,
+      sortBy: query.sortBy as any,
+      sortOrder: query.sortOrder as any,
+      limit,
+      pageSize: limit,
+      page,
+      offset,
+    });
     return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  async getProjectDetails(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const details = await adminService.getProjectDetails(id);
+    return reply.status(200).send(createSuccessResponse(details));
+  }
+
+  async archiveProject(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const project = await adminService.archiveProject(id, actor);
+    return reply.status(200).send(createSuccessResponse(project));
+  }
+
+  async restoreProject(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const project = await adminService.restoreProject(id, actor);
+    return reply.status(200).send(createSuccessResponse(project));
+  }
+
+  async createProjectSnapshot(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as { name: string; description?: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const snapshot = await adminService.createProjectSnapshot(id, body, actor);
+    return reply.status(201).send(createSuccessResponse(snapshot));
   }
 
   async listJobs(request: FastifyRequest, reply: FastifyReply) {
@@ -118,11 +160,59 @@ export class AdminController {
   }
 
   async listMedia(request: FastifyRequest, reply: FastifyReply) {
-    const query = request.query as { limit?: string; offset?: string; search?: string };
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
-    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : undefined;
+    const offset = query.offset ? parseInt(query.offset, 10) : undefined;
 
-    const result = await adminService.listMedia(limit, offset, query.search);
+    const result = await adminService.listMedia({
+      search: query.search,
+      category: query.category,
+      status: query.status,
+      owner: query.owner,
+      createdFrom: query.createdFrom,
+      createdTo: query.createdTo,
+      sortBy: query.sortBy as any,
+      sortOrder: query.sortOrder as any,
+      limit,
+      pageSize: limit,
+      page,
+      offset,
+    });
+    return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  async getMediaDetails(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const details = await adminService.getMediaDetails(id);
+    return reply.status(200).send(createSuccessResponse(details));
+  }
+
+  async retryMediaProcessing(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const asset = await adminService.retryMediaProcessing(id, actor);
+    return reply.status(200).send(createSuccessResponse(asset));
+  }
+
+  async archiveMedia(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const asset = await adminService.archiveMedia(id, actor);
+    return reply.status(200).send(createSuccessResponse(asset));
+  }
+
+  async deleteMedia(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const result = await adminService.deleteMedia(id, actor);
+    return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  async cleanupOrphanedMedia(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+    const result = await adminService.cleanupOrphanedMedia(id, actor);
     return reply.status(200).send(createSuccessResponse(result));
   }
 

@@ -6,7 +6,11 @@ import {
   AdminUserDetailView,
   PaginatedUsersResponse,
   AdminProjectView,
+  AdminProjectDetailView,
+  PaginatedProjectsResponse,
   AdminMediaView,
+  AdminMediaDetailView,
+  PaginatedMediaResponse,
   AdminCommentView,
   AdminAuditLogEntry,
   AdminJobView,
@@ -57,10 +61,13 @@ class AdminApiClient {
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const token = this.getToken();
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       Accept: 'application/json',
       ...(options.headers as Record<string, string>),
     };
+
+    if (options.body) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (token) {
       if (token.startsWith('adm_')) {
@@ -198,15 +205,134 @@ class AdminApiClient {
   }
 
   // Projects
-  async getProjects(): Promise<AdminProjectView[]> {
-    const res = await this.request<any>('/admin/projects');
-    return Array.isArray(res) ? res : (res.projects || []);
+  async getProjects(params?: {
+    search?: string;
+    owner?: string;
+    status?: string;
+    createdFrom?: string;
+    createdTo?: string;
+    sizeCategory?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    page?: number;
+    pageSize?: number;
+  }): Promise<PaginatedProjectsResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.owner) searchParams.set('owner', params.owner);
+    if (params?.status && params.status !== 'all') searchParams.set('status', params.status);
+    if (params?.createdFrom) searchParams.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) searchParams.set('createdTo', params.createdTo);
+    if (params?.sizeCategory && params.sizeCategory !== 'all') searchParams.set('sizeCategory', params.sizeCategory);
+    if (params?.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params?.sortOrder) searchParams.set('sortOrder', params.sortOrder);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.pageSize) searchParams.set('pageSize', params.pageSize.toString());
+
+    const qs = searchParams.toString();
+    const res = await this.request<any>(`/admin/projects${qs ? `?${qs}` : ''}`);
+    if (res && res.projects) {
+      return res as PaginatedProjectsResponse;
+    }
+    const projectArray: AdminProjectView[] = Array.isArray(res) ? res : [];
+    return {
+      projects: projectArray,
+      total: projectArray.length,
+      page: 1,
+      pageSize: projectArray.length || 50,
+      totalPages: 1,
+    };
+  }
+
+  async getProjectDetails(projectId: string): Promise<AdminProjectDetailView> {
+    return this.request<AdminProjectDetailView>(`/admin/projects/${projectId}`);
+  }
+
+  async archiveProject(projectId: string): Promise<AdminProjectView> {
+    return this.request<AdminProjectView>(`/admin/projects/${projectId}/archive`, {
+      method: 'POST',
+    });
+  }
+
+  async restoreProject(projectId: string): Promise<AdminProjectView> {
+    return this.request<AdminProjectView>(`/admin/projects/${projectId}/restore`, {
+      method: 'POST',
+    });
+  }
+
+  async createProjectSnapshot(projectId: string, data: { name: string; description?: string }): Promise<any> {
+    return this.request<any>(`/admin/projects/${projectId}/snapshots`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   // Media
-  async getMedia(): Promise<AdminMediaView[]> {
-    const res = await this.request<any>('/admin/media');
-    return Array.isArray(res) ? res : (res.media || []);
+  async getMedia(params?: {
+    search?: string;
+    category?: string;
+    status?: string;
+    owner?: string;
+    createdFrom?: string;
+    createdTo?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    page?: number;
+    pageSize?: number;
+  }): Promise<PaginatedMediaResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.category && params.category !== 'all') searchParams.set('category', params.category);
+    if (params?.status && params.status !== 'all') searchParams.set('status', params.status);
+    if (params?.owner && params.owner !== 'all') searchParams.set('owner', params.owner);
+    if (params?.createdFrom) searchParams.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) searchParams.set('createdTo', params.createdTo);
+    if (params?.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params?.sortOrder) searchParams.set('sortOrder', params.sortOrder);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.pageSize) searchParams.set('pageSize', params.pageSize.toString());
+
+    const qs = searchParams.toString();
+    const res = await this.request<any>(`/admin/media${qs ? `?${qs}` : ''}`);
+    if (res && res.media) {
+      return res as PaginatedMediaResponse;
+    }
+    const mediaArray: AdminMediaView[] = Array.isArray(res) ? res : [];
+    return {
+      media: mediaArray,
+      total: mediaArray.length,
+      page: 1,
+      pageSize: mediaArray.length || 50,
+      totalPages: 1,
+    };
+  }
+
+  async getMediaDetails(mediaId: string): Promise<AdminMediaDetailView> {
+    return this.request<AdminMediaDetailView>(`/admin/media/${mediaId}`);
+  }
+
+  async retryMediaProcessing(mediaId: string): Promise<AdminMediaView> {
+    return this.request<AdminMediaView>(`/admin/media/${mediaId}/retry`, {
+      method: 'POST',
+    });
+  }
+
+  async archiveMedia(mediaId: string): Promise<AdminMediaView> {
+    return this.request<AdminMediaView>(`/admin/media/${mediaId}/archive`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteMedia(mediaId: string): Promise<{ deleted: boolean; id: string; message: string }> {
+    return this.request<{ deleted: boolean; id: string; message: string }>(`/admin/media/${mediaId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async cleanupOrphanedMedia(mediaId: string): Promise<{ success: boolean; mediaId: string; message: string }> {
+    return this.request<{ success: boolean; mediaId: string; message: string }>(`/admin/media/${mediaId}/cleanup-orphaned`, {
+      method: 'POST',
+    });
   }
 
   // Jobs
