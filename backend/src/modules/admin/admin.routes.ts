@@ -17,7 +17,8 @@ export async function requireAdmin(request: FastifyRequest, _reply: FastifyReply
     const token = authHeader.split(' ')[1];
     try {
       const payload = authService.verifyAccessToken(token);
-      if (payload.role === 'ADMIN' || payload.role === 'SUPERADMIN' || (payload as any).isAdmin) {
+      const role = (payload.role || '').toUpperCase();
+      if (role === 'ADMIN' || role === 'SUPERADMIN' || (payload as any).isAdmin) {
         (request as any).user = payload;
         return;
       }
@@ -30,16 +31,37 @@ export async function requireAdmin(request: FastifyRequest, _reply: FastifyReply
 }
 
 export async function adminRoutes(fastify: FastifyInstance) {
-  // All admin routes must be strongly protected
-  fastify.addHook('preHandler', requireAdmin);
+  // Public admin authentication endpoint
+  fastify.post('/login', adminController.adminLogin.bind(adminController));
 
-  fastify.get('/users', adminController.listUsers.bind(adminController));
-  fastify.get('/projects', adminController.listProjects.bind(adminController));
-  fastify.get('/jobs', adminController.listJobs.bind(adminController));
-  fastify.get('/failed-jobs', adminController.listFailedJobs.bind(adminController));
-  fastify.post('/jobs/:id/retry', adminController.retryJob.bind(adminController));
-  fastify.get('/usage', adminController.getUsage.bind(adminController));
-  fastify.get('/subscriptions', adminController.getSubscriptions.bind(adminController));
-  fastify.get('/credits', adminController.getCredits.bind(adminController));
-  fastify.get('/audit-logs', adminController.listAuditLogs.bind(adminController));
+  // Protected admin routes require valid ADMIN / SUPERADMIN credentials or x-admin-key
+  fastify.register(async (protectedAdmin) => {
+    protectedAdmin.addHook('preHandler', requireAdmin);
+
+    // Executive overview & charts telemetry
+    protectedAdmin.get('/stats', adminController.getStatsOverview.bind(adminController));
+    protectedAdmin.get('/overview', adminController.getStatsOverview.bind(adminController));
+    protectedAdmin.get('/charts', adminController.getCharts.bind(adminController));
+    protectedAdmin.get('/health', adminController.getSystemHealth.bind(adminController));
+    protectedAdmin.get('/system/health', adminController.getSystemHealth.bind(adminController));
+
+    // Core platform resources
+    protectedAdmin.get('/users', adminController.listUsers.bind(adminController));
+    protectedAdmin.patch('/users/:id/role', adminController.updateUserRole.bind(adminController));
+    protectedAdmin.get('/projects', adminController.listProjects.bind(adminController));
+    protectedAdmin.get('/media', adminController.listMedia.bind(adminController));
+    protectedAdmin.get('/comments', adminController.listComments.bind(adminController));
+    protectedAdmin.get('/jobs', adminController.listJobs.bind(adminController));
+    protectedAdmin.get('/ai/jobs', adminController.listAIJobs.bind(adminController));
+    protectedAdmin.get('/failed-jobs', adminController.listFailedJobs.bind(adminController));
+    protectedAdmin.post('/jobs/:id/retry', adminController.retryJob.bind(adminController));
+
+    // Telemetry & Billing
+    protectedAdmin.get('/usage', adminController.getUsage.bind(adminController));
+    protectedAdmin.get('/subscriptions', adminController.getSubscriptions.bind(adminController));
+    protectedAdmin.get('/credits', adminController.getCredits.bind(adminController));
+    protectedAdmin.post('/credits/grant', adminController.grantCredits.bind(adminController));
+    protectedAdmin.post('/users/:id/credits/grant', adminController.grantCredits.bind(adminController));
+    protectedAdmin.get('/audit-logs', adminController.listAuditLogs.bind(adminController));
+  });
 }

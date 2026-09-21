@@ -76,6 +76,35 @@ export class AuthService {
     // Register default OAuth providers
     oauthRegistry.register(new GoogleOAuthProvider());
     oauthRegistry.register(new AppleOAuthProvider());
+
+    // Seed default administrator for admin console if not present
+    const defaultAdminEmail = 'admin@techxayan.com';
+    if (!Array.from(mockUsers.values()).some((u) => u.email === defaultAdminEmail)) {
+      const adminId = 'admin_super_master';
+      const passwordHash = bcrypt.hashSync('Admin123!', 10);
+      const now = new Date().toISOString();
+      const adminUser: User = {
+        id: adminId,
+        email: defaultAdminEmail,
+        password_hash: passwordHash,
+        display_name: 'Platform Super Administrator',
+        avatar_url: null,
+        role: 'SUPERADMIN',
+        status: 'active',
+        created_at: now,
+        updated_at: now,
+      };
+      mockUsers.set(adminId, adminUser);
+      mockProfiles.set(adminId, {
+        userId: adminId,
+        displayName: 'Platform Super Administrator',
+        avatarUrl: null,
+        bio: 'Chief SaaS Platform Administrator',
+        timezone: 'UTC',
+        locale: 'en-US',
+        preferences: { theme: 'dark', autoSaveIntervalSeconds: 30 },
+      });
+    }
   }
 
   // ============================================================================

@@ -6,6 +6,9 @@ import sensible from '@fastify/sensible';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import websocket from '@fastify/websocket';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 
 import { env } from './config/env.js';
@@ -289,6 +292,41 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiRoutes, { prefix: '/ai' });
   await app.register(projectsRoutes, { prefix: '/projects' });
   await app.register(authRoutes, { prefix: '/auth' });
+
+  // Serve Admin Dashboard Web Application if built
+  const possibleAdminPaths = [
+    path.resolve(process.cwd(), '../admin/dist'),
+    path.resolve(process.cwd(), 'admin/dist'),
+    path.resolve(process.cwd(), '../../admin/dist'),
+  ];
+  const adminDistPath = possibleAdminPaths.find((p) => fs.existsSync(p));
+
+  if (adminDistPath) {
+    logger.info({ adminDistPath }, 'Registering Admin Web Dashboard static provider');
+    await app.register(fastifyStatic, {
+      root: adminDistPath,
+      prefix: '/admin/',
+      decorateReply: false,
+    });
+
+    app.get('/admin', async (_req, reply) => {
+      return reply.redirect('/admin/');
+    });
+
+    app.setNotFoundHandler(async (request, reply) => {
+      if (
+        request.method === 'GET' &&
+        request.raw.url &&
+        request.raw.url.startsWith('/admin') &&
+        !request.raw.url.startsWith('/admin/api')
+      ) {
+        return reply.sendFile('index.html', adminDistPath);
+      }
+      return reply
+        .status(404)
+        .send(createErrorResponse('NOT_FOUND', 'Route not found', undefined, request.id));
+    });
+  }
 
   return app;
 }
