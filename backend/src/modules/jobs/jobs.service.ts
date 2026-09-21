@@ -5,9 +5,12 @@ import { db } from '../../database/client.js';
 import { NotFoundError, ForbiddenError } from '../../core/errors.js';
 import { logger } from '../../core/logger.js';
 
-const mockJobs = new Map<string, MediaJob>();
+export const mockJobs = new Map<string, MediaJob>();
 
 export class JobsService {
+  getJobInternal(id: string): MediaJob | undefined {
+    return mockJobs.get(id);
+  }
   async createRenderJob(userId: string, payload: RenderExportPayload): Promise<MediaJob> {
     const id = uuidv4();
     const now = new Date().toISOString();
@@ -40,7 +43,7 @@ export class JobsService {
     }
 
     // Dispatch to background queue
-    await jobQueue.add('render_export', { jobId: id, ...payload });
+    await jobQueue.add('render_export', { jobId: id, userId, ...payload });
 
     logger.info({ jobId: id, userId, projectId: payload.projectId }, 'Render export job enqueued');
     return job;

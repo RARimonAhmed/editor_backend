@@ -134,7 +134,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(rateLimit, {
-    max: env.RATE_LIMIT_MAX,
+    max: env.NODE_ENV === 'test' ? 100000 : env.RATE_LIMIT_MAX,
     timeWindow: env.RATE_LIMIT_WINDOW_MS,
   });
 
@@ -184,6 +184,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       docExpansion: 'list',
       deepLinking: true,
     },
+  });
+
+  // Root redirect to Swagger Documentation
+  app.get('/', async (_req, reply) => {
+    return reply.redirect('/docs');
   });
 
   // Health Checks

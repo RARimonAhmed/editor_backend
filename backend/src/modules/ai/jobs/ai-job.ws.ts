@@ -84,11 +84,11 @@ export class AIJobNotificationHub {
     // 3. Central Realtime Multi-Channel Broadcast
     try {
       if (event.event === 'JOB_PROGRESS') {
-        realtimeService.notifyAiJobProgress(event.jobId, event.userId, event.progress, (event as any).currentStep);
+        realtimeService.notifyAiJobProgress(event.jobId, event.userId, event.progress, (event as any).currentStep, event.projectId || undefined);
       } else if (event.event === 'JOB_COMPLETED') {
-        realtimeService.notifyAiJobComplete(event.jobId, event.userId, (event as any).output, (event as any).cost);
-      } else if (event.event === 'JOB_FAILED') {
-        realtimeService.notifyAiJobFailed(event.jobId, event.userId, (event as any).error || 'Failed');
+        realtimeService.notifyAiJobComplete(event.jobId, event.userId, (event as any).output, (event as any).cost, event.projectId || undefined);
+      } else if (event.event === 'JOB_FAILED' || event.event === 'JOB_CANCELLED') {
+        realtimeService.notifyAiJobFailed(event.jobId, event.userId, (event as any).error || 'Cancelled or failed', event.projectId || undefined);
       }
     } catch {
       // ignore

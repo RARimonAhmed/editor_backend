@@ -76,6 +76,17 @@ export async function aiRoutes(fastify: FastifyInstance) {
     },
     aiController.textToSpeech.bind(aiController)
   );
+  fastify.post(
+    '/tts',
+    {
+      schema: {
+        description: 'Synthesize speech/voiceover from text (alias)',
+        tags: ['AI Gateway'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiController.textToSpeech.bind(aiController)
+  );
 
   // 5. Image Generation
   fastify.post(
@@ -109,6 +120,17 @@ export async function aiRoutes(fastify: FastifyInstance) {
     {
       schema: {
         description: 'Generate semantic vector embeddings for text search and indexing',
+        tags: ['AI Gateway'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiController.generateEmbedding.bind(aiController)
+  );
+  fastify.post(
+    '/embeddings',
+    {
+      schema: {
+        description: 'Generate semantic vector embeddings for text search and indexing (alias)',
         tags: ['AI Gateway'],
         security: [{ bearerAuth: [] }],
       },

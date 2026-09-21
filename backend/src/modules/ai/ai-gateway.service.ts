@@ -134,10 +134,18 @@ export class AIGatewayService {
     state.tokens -= 1;
   }
 
+  setUserRateLimitTokens(userId: string, tokens: number) {
+    this.userRateLimits.set(userId, { tokens, lastRefill: Date.now() });
+  }
+
+  resetRateLimits() {
+    this.userRateLimits.clear();
+  }
+
   // --------------------------------------------------------------------------
   // CORE DISPATCHER WITH TIMEOUT, RETRY, FALLBACK & USAGE
   // --------------------------------------------------------------------------
-  private async executeWithResilience<Req extends { timeoutMs?: number; provider?: string; fallbackProvider?: string; model?: string; skipCreditDeduction?: boolean }, Res>(
+  private async executeWithResilience<Req extends { timeoutMs?: number; provider?: string; fallbackProvider?: string; model?: string; skipCreditDeduction?: boolean; requestId?: string; jobId?: string }, Res>(
     userId: string,
     capability: AICapability,
     req: Req,
@@ -179,6 +187,8 @@ export class AIGatewayService {
           provider: primaryProviderId,
           model,
           latencyMs,
+          requestId: req.requestId,
+          jobId: req.jobId,
           timestamp: new Date().toISOString(),
           usage,
         },
@@ -208,6 +218,8 @@ export class AIGatewayService {
                 latencyMs,
                 fallbackUsed: true,
                 fallbackFrom: primaryProviderId,
+                requestId: req.requestId,
+                jobId: req.jobId,
                 timestamp: new Date().toISOString(),
                 usage,
               },
@@ -227,7 +239,6 @@ export class AIGatewayService {
           `Automated refund for failed ${creditDescription}`
         );
       }
-
       throw primaryError;
     }
   }

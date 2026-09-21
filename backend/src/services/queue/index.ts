@@ -7,6 +7,9 @@ export type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'canc
 export interface JobOptions {
   maxAttempts?: number;
   backoffMs?: number;
+  timeoutMs?: number;
+  jobId?: string;
+  deduplicationKey?: string;
 }
 
 export interface Job<T = any> {
@@ -18,6 +21,8 @@ export interface Job<T = any> {
   attempts: number;
   maxAttempts: number;
   backoffMs: number;
+  timeoutMs?: number;
+  deduplicationKey?: string;
   progress: number;
   currentStep?: string;
   error?: string;
@@ -38,8 +43,11 @@ export interface IJobQueue {
   getJob(id: string): Promise<Job | null>;
   cancelJob(id: string): Promise<boolean>;
   retryJob(id: string): Promise<Job | null>;
+  retryDeadLetterJob(id: string): Promise<Job | null>;
   getDeadLetterJobs(): Promise<Job[]>;
   updateProgress(id: string, progress: number, currentStep?: string, extra?: Record<string, any>): Promise<void>;
+  recoverStalledJobs(type?: string): Promise<number>;
+  restartWorker<T, R>(type: string, newProcessor?: JobProcessor<T, R>): Promise<void>;
   on(event: string, listener: (...args: any[]) => void): void;
   off(event: string, listener: (...args: any[]) => void): void;
 }
@@ -50,8 +58,31 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
   private deadLetterJobs = new Map<string, Job>();
 
   async add<T>(type: string, data: T, options?: JobOptions): Promise<Job<T>> {
+    const id = options?.jobId || uuidv4();
+
+    // Check idempotency / deduplication
+    if (options?.jobId && this.jobs.has(options.jobId)) {
+      const existing = this.jobs.get(options.jobId)!;
+      if (existing.status === 'queued' || existing.status === 'processing') {
+        logger.info({ jobId: id, type }, 'Idempotent duplicate job returned');
+        return existing;
+      }
+    }
+    if (options?.deduplicationKey) {
+      for (const existing of this.jobs.values()) {
+        if (
+          existing.type === type &&
+          existing.deduplicationKey === options.deduplicationKey &&
+          (existing.status === 'queued' || existing.status === 'processing')
+        ) {
+          logger.info({ jobId: existing.id, deduplicationKey: options.deduplicationKey }, 'Deduplicated job reused');
+          return existing;
+        }
+      }
+    }
+
     const job: Job<T> = {
-      id: uuidv4(),
+      id,
       type,
       data,
       createdAt: new Date(),
@@ -59,6 +90,8 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
       attempts: 0,
       maxAttempts: options?.maxAttempts ?? 3,
       backoffMs: options?.backoffMs ?? 50,
+      timeoutMs: options?.timeoutMs,
+      deduplicationKey: options?.deduplicationKey,
       progress: 0,
     };
 
@@ -77,9 +110,9 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
     this.processors.set(type, processor as JobProcessor);
     logger.info({ type }, 'Registered background job processor');
 
-    // Run any queued jobs for this type
+    // Run any queued or pending jobs for this type
     for (const job of this.jobs.values()) {
-      if (job.type === type && job.status === 'queued') {
+      if (job.type === type && (job.status === 'queued' || job.status === 'processing')) {
         setTimeout(() => this.executeJob(job, processor as JobProcessor), 5);
       }
     }
@@ -131,8 +164,39 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
     return job;
   }
 
+  async retryDeadLetterJob(id: string): Promise<Job | null> {
+    return this.retryJob(id);
+  }
+
   async getDeadLetterJobs(): Promise<Job[]> {
     return Array.from(this.deadLetterJobs.values());
+  }
+
+  async recoverStalledJobs(type?: string): Promise<number> {
+    let recoveredCount = 0;
+    for (const job of this.jobs.values()) {
+      if (type && job.type !== type) continue;
+
+      if (job.status === 'processing' || job.status === 'queued') {
+        const processor = this.processors.get(job.type);
+        if (processor) {
+          job.status = 'queued';
+          recoveredCount++;
+          logger.info({ jobId: job.id, type: job.type }, 'Recovering stalled/queued job after worker restart');
+          setTimeout(() => this.executeJob(job, processor), 5);
+        }
+      }
+    }
+    return recoveredCount;
+  }
+
+  async restartWorker<T, R>(type: string, newProcessor?: JobProcessor<T, R>): Promise<void> {
+    logger.info({ type }, 'Restarting queue worker');
+    this.processors.delete(type);
+    if (newProcessor) {
+      this.processors.set(type, newProcessor as JobProcessor);
+      await this.recoverStalledJobs(type);
+    }
   }
 
   async updateProgress(id: string, progress: number, currentStep?: string, extra?: Record<string, any>): Promise<void> {
@@ -167,7 +231,23 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
     this.emit(`started:${job.id}`, job);
 
     try {
-      const result = await processor(job);
+      let result: any;
+      if (job.timeoutMs && job.timeoutMs > 0) {
+        let timeoutHandle: any;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error(`Job execution timed out after ${job.timeoutMs}ms`));
+          }, job.timeoutMs);
+        });
+
+        try {
+          result = await Promise.race([processor(job), timeoutPromise]);
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+      } else {
+        result = await processor(job);
+      }
 
       if ((job.status as JobStatus) === 'cancelled') {
         return;
@@ -221,4 +301,6 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
   }
 }
 
-export const jobQueue: IJobQueue = new MemoryJobQueue();
+import { BullMQJobQueue } from './bullmq-queue.js';
+
+export const jobQueue: IJobQueue = new BullMQJobQueue();

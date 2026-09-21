@@ -262,18 +262,26 @@ export class AIJobService {
    * Cancels a queued or running AI job and refunds credits
    */
   async cancelJob(id: string, userId: string): Promise<AIJobRecord> {
-    const job = await this.getJob(id, userId);
+    const rawJob = mockAIJobs.get(id);
+    if (!rawJob) {
+      throw new NotFoundError(`AI job not found: ${id}`);
+    }
 
-    if (job.status === 'COMPLETED') {
+    if (rawJob.userId !== userId) {
+      throw new ForbiddenError('You do not have permission to view this AI job');
+    }
+
+    if (rawJob.status === 'COMPLETED') {
       throw new ValidationError('Cannot cancel a completed AI job');
     }
 
-    if (job.status === 'CANCELLED') {
-      return job;
+    if (rawJob.status === 'CANCELLED') {
+      return this.sanitizeJob(rawJob);
     }
 
-    job.status = 'CANCELLED';
-    job.completedAt = new Date().toISOString();
+    rawJob.status = 'CANCELLED';
+    rawJob.completedAt = new Date().toISOString();
+    const job = rawJob;
 
     // Cancel underlying job queue execution
     if ((job as any).queueJobId) {

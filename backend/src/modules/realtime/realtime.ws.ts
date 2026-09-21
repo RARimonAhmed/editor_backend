@@ -8,7 +8,7 @@ export async function realtimeWsRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/ws/v1/realtime',
     { websocket: true },
-    (connection, req) => {
+    async (connection, req) => {
       const query = req.query as { token?: string; channels?: string };
       let userId = 'anonymous';
 
@@ -28,7 +28,7 @@ export async function realtimeWsRoutes(fastify: FastifyInstance) {
       // Parse initial channels from query if provided e.g. "project:123,job:456"
       if (query.channels) {
         const initialChannels = query.channels.split(',').map((c) => c.trim()).filter(Boolean);
-        realtimeService.subscribe(connectionId, initialChannels);
+        await realtimeService.subscribe(connectionId, initialChannels);
       }
 
       // Send connection acknowledgement
@@ -42,18 +42,30 @@ export async function realtimeWsRoutes(fastify: FastifyInstance) {
         })
       );
 
-      socket.on('message', (raw) => {
+      socket.on('message', async (raw) => {
         try {
           const msg = JSON.parse(raw.toString());
           if (msg.action === 'subscribe' && Array.isArray(msg.channels)) {
-            realtimeService.subscribe(connectionId, msg.channels);
-            socket.send(
-              JSON.stringify({
-                action: 'subscribed',
-                channels: msg.channels,
-                allChannels: Array.from(session.subscribedChannels),
-              })
-            );
+            const { allowed, rejected } = await realtimeService.subscribe(connectionId, msg.channels);
+            if (rejected.length > 0) {
+              socket.send(
+                JSON.stringify({
+                  action: 'subscription_error',
+                  error: 'Unauthorized access to requested channels',
+                  rejectedChannels: rejected,
+                  allowedChannels: allowed,
+                })
+              );
+            }
+            if (allowed.length > 0) {
+              socket.send(
+                JSON.stringify({
+                  action: 'subscribed',
+                  channels: allowed,
+                  allChannels: Array.from(session.subscribedChannels),
+                })
+              );
+            }
           } else if (msg.action === 'unsubscribe' && Array.isArray(msg.channels)) {
             realtimeService.unsubscribe(connectionId, msg.channels);
             socket.send(

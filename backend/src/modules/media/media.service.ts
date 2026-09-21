@@ -4,7 +4,8 @@ import crypto from 'crypto';
 import { storageService, PresignedUrlResult, MultipartPartInfo } from '../../services/storage/index.js';
 import { db } from '../../database/client.js';
 import { jobQueue } from '../../services/queue/index.js';
-import { MediaProcessingJobPayload } from './media-processor.service.js';
+import { MediaProcessingJobPayload, mediaProcessorService } from './media-processor.service.js';
+import { mediaValidationService } from './media-validation.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../core/errors.js';
 import {
   MediaCategory,
@@ -35,8 +36,13 @@ export interface MediaAsset {
   width?: number;
   height?: number;
   framerate?: number;
+  codec?: string;
+  container?: string;
+  bitrateKbps?: number;
+  audioCodec?: string;
   audioChannels?: number;
   audioSampleRate?: number;
+  rotation?: number;
   checksumSha256?: string;
   uploadId?: string;
   uploadType: 'direct' | 'multipart';
@@ -237,9 +243,16 @@ export class MediaService {
     }
 
     // 2. Checksum validation
-    const computedChecksum = crypto.createHash('sha256').update(buffer).digest('hex');
-    if (input.checksumSha256 && input.checksumSha256.toLowerCase() !== computedChecksum) {
-      throw new ValidationError('Checksum SHA-256 verification failed: computed digest does not match expected.');
+    const checkResult = mediaValidationService.validateChecksum(buffer, input.checksumSha256);
+    if (!checkResult.valid) {
+      throw new ValidationError(checkResult.reason || 'Checksum SHA-256 verification failed');
+    }
+    const computedChecksum = checkResult.computedSha256;
+
+    // 2b. Magic Bytes binary validation
+    const magicCheck = mediaValidationService.validateMagicBytes(buffer, category, input.mimeType);
+    if (!magicCheck.valid) {
+      throw new ValidationError(`Security scan rejected upload: ${magicCheck.reason}`);
     }
 
     // 3. Security Scan
@@ -294,9 +307,13 @@ export class MediaService {
       throw new ForbiddenError('You do not have permission to access this media asset');
     }
 
+    // 0. Idempotency: If already in PROCESSING or READY, return existing state
+    if (asset.status === 'READY' || (asset.status === 'PROCESSING' && asset.processingJobId)) {
+      logger.info({ mediaId: asset.id, status: asset.status }, 'Idempotent complete: asset already processing or ready');
+      return asset;
+    }
+
     const now = new Date().toISOString();
-    asset.status = 'PROCESSING';
-    asset.updatedAt = now;
 
     // 1. Complete multipart if applicable
     if (asset.uploadType === 'multipart' && (input.uploadId || asset.uploadId)) {
@@ -305,26 +322,57 @@ export class MediaService {
       await storageService.completeMultipartUpload(asset.fileKey, uploadId, parts);
     }
 
-    // 2. Checksum validation
-    const providedChecksum = input.checksumSha256 || asset.checksumSha256;
-    if (input.checksumSha256 && asset.checksumSha256 && input.checksumSha256 !== asset.checksumSha256) {
+    // 2. Checksum & Magic Bytes validation on stored object (if physical bytes exist)
+    const expectedChecksum = input.checksumSha256 || asset.checksumSha256;
+    let storedBuffer: Buffer | null = null;
+    try {
+      storedBuffer = await storageService.getObject(asset.fileKey);
+    } catch {
+      // no physical object stored yet
+    }
+
+    if (storedBuffer && storedBuffer.length > 0) {
+      if (expectedChecksum) {
+        const checkResult = mediaValidationService.validateChecksum(storedBuffer, expectedChecksum);
+        if (!checkResult.valid) {
+          asset.status = 'FAILED';
+          asset.scanResult = { status: 'failed', details: checkResult.reason, scannedAt: now };
+          asset.updatedAt = now;
+          await storageService.deleteObject(asset.fileKey);
+          throw new ValidationError(checkResult.reason || 'Checksum mismatch');
+        }
+      }
+
+      const magicResult = mediaValidationService.validateMagicBytes(storedBuffer, asset.category, asset.mimeType);
+      if (!magicResult.valid) {
+        asset.status = 'FAILED';
+        asset.scanResult = { status: 'failed', details: magicResult.reason, scannedAt: now };
+        asset.updatedAt = now;
+        await storageService.deleteObject(asset.fileKey);
+        throw new ValidationError(`Security scan rejected upload: ${magicResult.reason}`);
+      }
+    } else if (input.checksumSha256 && asset.checksumSha256 && input.checksumSha256 !== asset.checksumSha256) {
       asset.status = 'FAILED';
       asset.scanResult = { status: 'failed', details: 'Checksum SHA-256 mismatch detected', scannedAt: now };
+      asset.updatedAt = now;
       throw new ValidationError('Integrity error: Provided checksum does not match expected checksum.');
     }
 
     // 3. Security Scanning Hook
-    const scan = await this.executeSecurityScan(asset.fileKey, asset.mimeType, asset.category);
+    const scan = await this.executeSecurityScan(asset.fileKey, asset.mimeType, asset.category, storedBuffer || undefined);
     if (!scan.passed) {
       asset.status = 'FAILED';
       asset.scanResult = { status: 'failed', details: scan.reason, scannedAt: now };
+      asset.updatedAt = now;
+      await storageService.deleteObject(asset.fileKey);
       throw new ValidationError(`Security scan rejected upload: ${scan.reason}`);
     }
 
     // 4. Set status to PROCESSING & Enqueue Asynchronous Media Processing Pipeline Job
     asset.status = 'PROCESSING';
+    asset.updatedAt = now;
     asset.scanResult = { status: 'passed', scannedAt: now };
-    if (providedChecksum) asset.checksumSha256 = providedChecksum;
+    if (expectedChecksum) asset.checksumSha256 = expectedChecksum;
     if (input.durationSeconds) asset.durationSeconds = input.durationSeconds;
     if (input.width) asset.width = input.width;
     if (input.height) asset.height = input.height;
@@ -391,8 +439,8 @@ export class MediaService {
       job: jobData
         ? {
             id: jobData.id,
-            status: jobData.status,
-            progress: jobData.progress,
+            status: asset.status === 'READY' ? 'completed' : jobData.status,
+            progress: asset.status === 'READY' ? 100 : jobData.progress,
             currentStep: jobData.currentStep,
             attempts: jobData.attempts,
             maxAttempts: jobData.maxAttempts,
@@ -473,8 +521,15 @@ export class MediaService {
     asset.deletedAt = now;
     asset.updatedAt = now;
 
-    // Delete object from storage provider
-    await storageService.deleteObject(asset.fileKey);
+    // Delete object and generated artifacts from storage provider
+    try {
+      await storageService.deleteObject(asset.fileKey);
+      await storageService.deleteObject(`users/${userId}/media/thumbnails/${asset.id}_cover.jpg`);
+      await storageService.deleteObject(`users/${userId}/media/waveforms/${asset.id}_waveform.json`);
+      await storageService.deleteObject(`users/${userId}/media/proxies/${asset.id}_720p_proxy.mp4`);
+    } catch {
+      // ignore
+    }
 
     mockMediaAssets.set(id, asset);
 
@@ -493,7 +548,7 @@ export class MediaService {
   }
 
   // ============================================================================
-  // CANCEL UPLOAD
+  // CANCEL UPLOAD & CLEANUP PARTIAL OBJECTS
   // ============================================================================
   async cancel(id: string, userId: string): Promise<{ cancelled: boolean; id: string }> {
     const asset = mockMediaAssets.get(id);
@@ -505,9 +560,27 @@ export class MediaService {
       throw new ForbiddenError('You do not have permission to modify this media asset');
     }
 
+    // Abort active multipart session
     if (asset.uploadType === 'multipart' && asset.uploadId) {
-      await storageService.abortMultipartUpload(asset.fileKey, asset.uploadId);
+      try {
+        await storageService.abortMultipartUpload(asset.fileKey, asset.uploadId);
+      } catch {
+        // ignore
+      }
     }
+
+    // Cleanup partial or orphaned object from storage
+    try {
+      await storageService.deleteObject(asset.fileKey);
+    } catch {
+      // ignore
+    }
+
+    // Cancel active queue job and active worker child processes
+    if (asset.processingJobId) {
+      await jobQueue.cancelJob(asset.processingJobId);
+    }
+    mediaProcessorService.cancelProcessing(asset.id);
 
     asset.status = 'FAILED';
     asset.updatedAt = new Date().toISOString();
@@ -529,10 +602,41 @@ export class MediaService {
       throw new ForbiddenError('You do not have permission to modify this media asset');
     }
 
-    asset.status = 'UPLOADING';
-    asset.updatedAt = new Date().toISOString();
-    mockMediaAssets.set(id, asset);
+    let hasStorageObject = false;
+    try {
+      const head = await storageService.headObject(asset.fileKey);
+      hasStorageObject = !!head && head.contentLength > 0;
+    } catch {
+      hasStorageObject = false;
+    }
 
+    const now = new Date().toISOString();
+    if (hasStorageObject) {
+      asset.status = 'PROCESSING';
+      asset.updatedAt = now;
+
+      const job = await jobQueue.add<MediaProcessingJobPayload>(
+        'media_processing',
+        {
+          jobId: uuidv4(),
+          mediaId: asset.id,
+          userId,
+          projectId: asset.projectId,
+          fileKey: asset.fileKey,
+          mimeType: asset.mimeType,
+          category: asset.category,
+          fileName: asset.name,
+          fileSizeBytes: asset.fileSizeBytes,
+        },
+        { maxAttempts: 3, backoffMs: 50 }
+      );
+      asset.processingJobId = job.id;
+    } else {
+      asset.status = 'UPLOADING';
+      asset.updatedAt = now;
+    }
+
+    mockMediaAssets.set(id, asset);
     return asset;
   }
 

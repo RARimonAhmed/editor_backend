@@ -1,6 +1,7 @@
 import { jobQueue, Job } from './index.js';
 import { mediaProcessorService } from '../../modules/media/media-processor.service.js';
 import { jobsService } from '../../modules/jobs/jobs.service.js';
+import { realtimeService } from '../../modules/realtime/realtime.service.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../core/logger.js';
 
@@ -18,28 +19,36 @@ export function registerQueueProcessors() {
 
   // 2. Video Timeline Render & Export
   jobQueue.process('render_export', async (job: Job) => {
-    const { jobId, projectId, format, resolutionWidth, resolutionHeight, framerate } = job.data;
+    const { jobId, projectId, userId, format, resolutionWidth, resolutionHeight, framerate } = job.data;
     logger.info(
       { jobId, projectId, format, resolution: `${resolutionWidth}x${resolutionHeight}`, fps: framerate },
       'Processing video timeline render & export'
     );
 
-    await jobsService.updateJobProgress(jobId, 15, 'processing');
-    await delay(20);
-    await jobsService.updateJobProgress(jobId, 50, 'processing');
-    await delay(20);
-    await jobsService.updateJobProgress(jobId, 85, 'processing');
-    await delay(20);
+    try {
+      await jobsService.updateJobProgress(jobId, 15, 'processing');
+      await delay(20);
+      await jobsService.updateJobProgress(jobId, 50, 'processing');
+      await delay(20);
+      await jobsService.updateJobProgress(jobId, 85, 'processing');
+      await delay(20);
 
-    const outputKey = `exports/${projectId}/${jobId}.${format}`;
-    const outputUrl = `${env.STORAGE_PUBLIC_URL_PREFIX}/${outputKey}`;
+      const outputKey = `exports/${projectId}/${jobId}.${format}`;
+      const outputUrl = `${env.STORAGE_PUBLIC_URL_PREFIX}/${outputKey}`;
 
-    await jobsService.updateJobProgress(jobId, 100, 'completed', {
-      outputUrl,
-      outputKey,
-      format,
-      completedAt: new Date().toISOString(),
-    });
+      await jobsService.updateJobProgress(jobId, 100, 'completed', {
+        outputUrl,
+        outputKey,
+        format,
+        completedAt: new Date().toISOString(),
+      });
+
+      realtimeService.notifyExportComplete(jobId, userId || '', projectId, outputUrl);
+    } catch (err: any) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      realtimeService.notifyExportFailed(jobId, userId || '', projectId, errMsg);
+      throw err;
+    }
   });
 
   // 3. AI Audio Transcription

@@ -30,7 +30,7 @@ describe('Realtime Infrastructure Subsystem (WebSocket / SSE Abstraction)', () =
     expect(session.subscribedChannels.has(`user:${testUserId}`)).toBe(true);
 
     // Subscribe to project and job
-    realtimeService.subscribe('conn_test_1', [`project:${testProjectId}`, `job:${testJobId}`]);
+    await realtimeService.subscribe('conn_test_1', [`project:${testProjectId}`, `job:${testJobId}`]);
     expect(session.subscribedChannels.has(`project:${testProjectId}`)).toBe(true);
     expect(session.subscribedChannels.has(`job:${testJobId}`)).toBe(true);
 
@@ -52,7 +52,7 @@ describe('Realtime Infrastructure Subsystem (WebSocket / SSE Abstraction)', () =
     };
 
     realtimeService.registerWebSocket('conn_test_events', testUserId, mockSocket);
-    realtimeService.subscribe('conn_test_events', [`project:${testProjectId}`, `job:${testJobId}`]);
+    await realtimeService.subscribe('conn_test_events', [`project:${testProjectId}`, `job:${testJobId}`]);
 
     // 1. upload_progress
     realtimeService.notifyUploadProgress(testJobId, testUserId, 45, 'UPLOADING');

@@ -6,6 +6,7 @@ import {
   TimelineContext,
 } from './editor-command.types.js';
 import { aiGatewayService } from '../ai-gateway.service.js';
+import { commandValidatorService } from './command-validator.service.js';
 import { logger } from '../../../core/logger.js';
 
 export class IntentParserService {
@@ -87,15 +88,25 @@ Actions must be upper snake case (e.g. DELETE_RANGE, ADD_COLOR_PRESET, ADD_CONTR
           explanation: cmd.explanation || `Action ${cmd.action}`,
         }));
 
-        const categories = Array.from(new Set(commands.map((c) => c.category)));
-        return {
-          rawPrompt: trimmed,
-          primaryIntent: parsed.primaryIntent || 'custom_edit',
-          detectedCategories: categories,
-          confidence: 0.9,
+        const validation = commandValidatorService.validate(
           commands,
-          summary: parsed.summary || `Parsed ${commands.length} editor command(s)`,
-        };
+          timelineContext?.duration || 60
+        );
+
+        if (validation.valid && validation.validatedCommands.length > 0) {
+          const validatedCmds = validation.validatedCommands;
+          const categories = Array.from(new Set(validatedCmds.map((c) => c.category)));
+          return {
+            rawPrompt: trimmed,
+            primaryIntent: parsed.primaryIntent || 'custom_edit',
+            detectedCategories: categories,
+            confidence: 0.9,
+            commands: validatedCmds,
+            summary: parsed.summary || `Parsed ${validatedCmds.length} editor command(s)`,
+          };
+        } else {
+          logger.warn({ errors: validation.errors }, 'AI Gateway generated commands failed strict schema validation');
+        }
       }
     } catch (err) {
       logger.warn({ err, prompt: trimmed }, 'AI Gateway parsing failed, falling back to default command');

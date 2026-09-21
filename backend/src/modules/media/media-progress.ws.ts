@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { authService } from '../auth/auth.service.js';
 import { collaborationManager } from '../collaboration/collaboration.manager.js';
+import { realtimeService } from '../realtime/realtime.service.js';
 import { logger } from '../../core/logger.js';
 
 export interface ProgressSubscriber {
@@ -52,6 +53,17 @@ export class MediaProgressHub {
       }
     }
 
+    // Also forward to unified realtime service
+    try {
+      realtimeService.notifyUploadProgress(
+        payload.jobId || payload.mediaId,
+        (payload.details as any)?.userId || '',
+        payload.progress,
+        payload.status,
+        payload.projectId
+      );
+    } catch {}
+
     // Also broadcast to collaborative project room if attached
     if (payload.projectId) {
       collaborationManager.broadcast(payload.projectId, {
@@ -92,6 +104,54 @@ export class MediaProgressHub {
     if (payload.projectId) {
       collaborationManager.broadcast(payload.projectId, {
         action: 'MEDIA_PROCESSING_COMPLETED' as any,
+        projectId: payload.projectId,
+        senderId: 'system',
+        senderName: 'Media Processing Engine',
+        data: payload,
+      });
+    }
+  }
+
+  broadcastMediaReady(payload: {
+    mediaId: string;
+    asset: Record<string, any>;
+    projectId?: string;
+    jobId?: string;
+  }) {
+    const msg = JSON.stringify({
+      event: 'media_ready',
+      action: 'media_ready',
+      mediaId: payload.mediaId,
+      asset: payload.asset,
+      projectId: payload.projectId,
+      timestamp: new Date().toISOString(),
+    });
+
+    for (const sub of this.subscribers.values()) {
+      if (
+        (sub.mediaId && sub.mediaId === payload.mediaId) ||
+        (sub.jobId && payload.jobId && sub.jobId === payload.jobId) ||
+        (sub.userId && payload.asset.userId && sub.userId === payload.asset.userId)
+      ) {
+        if (sub.socket.readyState === WebSocket.OPEN) {
+          sub.socket.send(msg);
+        }
+      }
+    }
+
+    // Forward to unified realtime service
+    try {
+      realtimeService.notifyMediaReady(
+        payload.mediaId,
+        payload.asset?.userId || '',
+        payload.asset,
+        payload.projectId
+      );
+    } catch {}
+
+    if (payload.projectId) {
+      collaborationManager.broadcast(payload.projectId, {
+        action: 'media_ready' as any,
         projectId: payload.projectId,
         senderId: 'system',
         senderName: 'Media Processing Engine',

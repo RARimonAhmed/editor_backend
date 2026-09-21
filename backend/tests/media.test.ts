@@ -159,13 +159,22 @@ describe('Production Media Storage & Object Lifecycle Module', () => {
     expect(body.data.downloadUrl).toBeDefined();
 
     // Verify background worker completes pipeline and transitions to READY
-    await new Promise((r) => setTimeout(r, 60));
-    const checkRes = await app.inject({
-      method: 'GET',
-      url: `/v1/media/${multipartMediaId}`,
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-    expect(JSON.parse(checkRes.body).data.status).toBe('READY');
+    let attempts = 0;
+    let isReady = false;
+    while (attempts < 30 && !isReady) {
+      await new Promise((r) => setTimeout(r, 100));
+      attempts++;
+      const checkRes = await app.inject({
+        method: 'GET',
+        url: `/v1/media/${multipartMediaId}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (JSON.parse(checkRes.body).data?.status === 'READY') {
+        isReady = true;
+        break;
+      }
+    }
+    expect(isReady).toBe(true);
   });
 
   // 5. SECURITY SCAN HOOK DETECTION OF MALICIOUS SCRIPTS

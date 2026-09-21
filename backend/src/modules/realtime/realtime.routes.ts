@@ -45,7 +45,7 @@ export async function realtimeRoutes(fastify: FastifyInstance) {
       reply.raw.setHeader('X-Accel-Buffering', 'no');
       reply.raw.flushHeaders();
 
-      const session = realtimeService.registerSse(connectionId, userId, reply, initialChannels);
+      const session = await realtimeService.registerSse(connectionId, userId, reply, initialChannels);
 
       // Send initial handshake
       reply.raw.write(

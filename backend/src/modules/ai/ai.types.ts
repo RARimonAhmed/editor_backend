@@ -39,6 +39,8 @@ export interface AIGatewayMetadata {
   latencyMs: number;
   fallbackUsed?: boolean;
   fallbackFrom?: string;
+  requestId?: string;
+  jobId?: string;
   timestamp: string;
   usage: AIUsage;
 }

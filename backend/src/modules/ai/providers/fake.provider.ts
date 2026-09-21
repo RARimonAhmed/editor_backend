@@ -60,7 +60,7 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
 
 
   // Test simulation controls
-  public simulateFailure: 'none' | 'rate_limit' | 'timeout' | 'server_error' | 'invalid_input' = 'none';
+  public simulateFailure: 'none' | 'rate_limit' | 'timeout' | 'server_error' | 'invalid_input' | 'invalid_response' | 'malformed_json' = 'none';
   public failureCount = 0;
   public maxFailuresBeforeSuccess = 0;
   public simulateLatencyMs = 0;
@@ -77,7 +77,7 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
       await new Promise((r) => setTimeout(r, this.simulateLatencyMs));
     }
 
-    if (this.simulateFailure !== 'none') {
+    if (this.simulateFailure !== 'none' && this.simulateFailure !== 'malformed_json' && this.simulateFailure !== 'invalid_response') {
       if (this.maxFailuresBeforeSuccess > 0 && this.failureCount >= this.maxFailuresBeforeSuccess) {
         // Recover after N failures
         return;
@@ -102,6 +102,9 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
   // 1. Text Generation
   async generateText(req: AITextRequest): Promise<Omit<AITextResponse, 'gateway'>> {
     await this.checkSimulation();
+    if (this.simulateFailure === 'invalid_response') {
+      throw new AppError('AI Provider returned corrupt response schema', 502, 'AI_INVALID_RESPONSE');
+    }
     const model = req.model || this.defaultModels.text_generation!;
     return {
       text: `[${model}] Generated cinematic script summary for prompt: "${req.prompt}". Scene transitions are calibrated for high engagement.`,
@@ -112,6 +115,15 @@ export class FakeAIProviderAdapter implements IAIProviderAdapter {
   // 2. Structured JSON
   async generateStructuredJson<T>(req: AIStructuredJsonRequest<T>): Promise<Omit<AIStructuredJsonResponse<T>, 'gateway'>> {
     await this.checkSimulation();
+
+    if (this.simulateFailure === 'malformed_json') {
+      throw new AppError('Failed to parse AI provider response as JSON', 502, 'AI_INVALID_RESPONSE');
+    }
+
+    if (this.simulateFailure === 'invalid_response') {
+      throw new AppError('AI structured response does not conform to requested schema', 422, 'AI_SCHEMA_MISMATCH');
+    }
+
     const sampleStructuredData: Record<string, any> = {
       title: 'Cinematic Teaser',
       recommendedColorGrade: 'teal_and_orange',

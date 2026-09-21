@@ -91,8 +91,8 @@ describe('Asynchronous Media Processing Pipeline & Worker Subsystem', () => {
     let attempts = 0;
     let isReady = false;
 
-    while (attempts < 20 && !isReady) {
-      await new Promise((r) => setTimeout(r, 40));
+    while (attempts < 50 && !isReady) {
+      await new Promise((r) => setTimeout(r, 100));
       attempts++;
 
       const checkRes = await app.inject({

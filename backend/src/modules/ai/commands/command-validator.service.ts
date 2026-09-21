@@ -23,10 +23,28 @@ export class CommandValidatorService {
 
     for (let i = 0; i < commands.length; i++) {
       const rawCmd = commands[i];
+
+      // 0. Anti-Code-Execution Security Scan (Never allow arbitrary generated code to execute)
+      const serialized = JSON.stringify(rawCmd);
+      const dangerousPatterns = [
+        /<script/i,
+        /javascript:/i,
+        /\beval\s*\(/i,
+        /\bFunction\s*\(/i,
+        /\bchild_process\b/i,
+        /\bprocess\.(exit|env|mainModule)\b/i,
+        /\b__proto__\b/i,
+      ];
+      const hasCodeInjection = dangerousPatterns.some((pattern) => pattern.test(serialized));
+      if (hasCodeInjection) {
+        errors.push(`Command #${i + 1} (${rawCmd?.action || 'unknown'}): contains disallowed executable code patterns`);
+        continue;
+      }
+
       const parseResult = editorCommandSchema.safeParse(rawCmd);
 
       if (!parseResult.success) {
-        errors.push(`Command #${i + 1} (${rawCmd.action || 'unknown'}) failed schema validation: ${parseResult.error.message}`);
+        errors.push(`Command #${i + 1} (${rawCmd?.action || 'unknown'}) failed schema validation: ${parseResult.error.message}`);
         continue;
       }
 
