@@ -134,7 +134,7 @@ paths:
   # ============================================================================
   /v1/projects:
     get:
-      summary: List user projects with pagination
+      summary: List user projects with pagination and search
       operationId: listProjects
       security:
         - BearerAuth: []
@@ -147,10 +147,48 @@ paths:
           schema: { type: integer, default: 20 }
         - name: q
           in: query
+          description: Search term across title, description, and tags
           schema: { type: string }
+        - name: search
+          in: query
+          description: Alias for search term q
+          schema: { type: string }
+        - name: status
+          in: query
+          description: Filter by status
+          schema: { type: string, enum: [active, archived, deleted] }
+        - name: includeArchived
+          in: query
+          description: Whether to include archived projects in results
+          schema: { type: boolean, default: false }
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          schema: { type: string, enum: [updatedAt, createdAt, title], default: updatedAt }
+        - name: sortOrder
+          in: query
+          description: Sort direction
+          schema: { type: string, enum: [asc, desc], default: desc }
       responses:
         '200':
           description: Paginated projects list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      projects:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ProjectResponse'
+                      total: { type: integer }
+                      page: { type: integer }
+                      limit: { type: integer }
+                      totalPages: { type: integer }
     post:
       summary: Create new project
       operationId: createProject
@@ -183,13 +221,52 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Full project with timeline, canvas, and assets
+          description: Full project document with timeline, tracks, clips, canvas, and assets
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProjectResponse'
-    put:
+        '403':
+          description: Forbidden - caller does not own project or lack collaborator permission
+        '404':
+          description: Project not found
+    patch:
       summary: Update project with optimistic concurrency control
+      operationId: patchProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: If-Match
+          in: header
+          description: Optional ETag or version token for concurrency validation
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectPayload'
+      responses:
+        '200':
+          description: Updated project document with incremented version and fresh ETag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '403':
+          description: Insufficient permissions (viewer cannot edit timeline)
+        '409':
+          description: Concurrency conflict detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConcurrencyConflictError'
+    put:
+      summary: Replace project document with optimistic concurrency control
       operationId: updateProject
       security:
         - BearerAuth: []
@@ -206,13 +283,230 @@ paths:
               $ref: '#/components/schemas/UpdateProjectPayload'
       responses:
         '200':
-          description: Updated project
+          description: Updated project document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
         '409':
           description: Version conflict detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConcurrencyConflictError'
+    delete:
+      summary: Delete project (soft delete default, permanent purge with permanent=true)
+      operationId: deleteProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: permanent
+          in: query
+          description: If true, permanently purges project and version records
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Project deleted successfully
+        '403':
+          description: Forbidden - project:delete permission required
+
+  /v1/projects/{id}/rename:
+    patch:
+      summary: Rename project title
+      operationId: renameProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 255 }
+      responses:
+        '200':
+          description: Project renamed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+
+  /v1/projects/{id}/duplicate:
+    post:
+      summary: Duplicate project into a fresh active clone
+      operationId: duplicateProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, description: "Optional title for clone. Defaults to '<Title> (Copy)'" }
+      responses:
+        '201':
+          description: Duplicated project clone created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+
+  /v1/projects/{id}/archive:
+    post:
+      summary: Archive project (soft retention)
+      operationId: archiveProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Project archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+
+  /v1/projects/{id}/restore:
+    post:
+      summary: Restore archived project back to active state
+      operationId: restoreProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Project restored to active status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+
+  /v1/projects/{id}/permanent-delete:
+    post:
+      summary: Permanently purge project and associated versions
+      operationId: permanentDeleteProject
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Project permanently removed
+
+  /v1/projects/{id}/snapshots:
+    post:
+      summary: Create manual named backup snapshot
+      operationId: createProjectSnapshot
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                changeSummary: { type: string, example: "Manual pre-render backup" }
+      responses:
+        '201':
+          description: Backup snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBackupSnapshot'
+    get:
+      summary: List backup snapshots for project
+      operationId: listProjectSnapshots
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: List of backup snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectBackupSnapshot'
+
+  /v1/projects/{id}/versions:
+    get:
+      summary: List project version history records
+      operationId: listProjectVersions
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Historical version records with versionNumber and change summaries
+
+  /v1/projects/{id}/versions/{versionNumber}/restore:
+    post:
+      summary: Non-destructive historical version restoration (creates version N+1)
+      operationId: restoreProjectVersion
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: versionNumber
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Version restored into a new current state (version N+1)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
 
   /v1/projects/{id}/autosave:
     post:
-      summary: Non-blocking client background autosave
+      summary: Non-blocking idempotent background autosave with version checking
       operationId: autosaveProject
       security:
         - BearerAuth: []
@@ -229,15 +523,31 @@ paths:
               type: object
               required: [baseVersion]
               properties:
-                baseVersion: { type: integer }
+                baseVersion: { type: integer, description: "Client's known project version" }
+                clientMutationId: { type: string, description: "Unique UUID for retry idempotency" }
+                clientTimestamp: { type: string, format: date-time }
+                deviceName: { type: string, example: "Android Pixel 8" }
                 canvas: { type: object }
                 timeline: { type: object }
                 changeSummary: { type: string }
       responses:
         '200':
           description: Autosaved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  version: { type: integer }
+                  etag: { type: string }
+                  autosavedAt: { type: string, format: date-time }
         '409':
-          description: Concurrency conflict
+          description: Concurrency conflict detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConcurrencyConflictError'
 
   /v1/projects/{id}/comments:
     get:
@@ -1025,3 +1335,105 @@ components:
               sourceOutPointMs: { type: integer }
               speed: { type: number, default: 1.0 }
               volume: { type: number, default: 1.0 }
+              isLocked: { type: boolean, default: false }
+              isMuted: { type: boolean, default: false }
+              text:
+                type: object
+                properties:
+                  content: { type: string }
+                  fontFamily: { type: string }
+                  fontSize: { type: number }
+                  color: { type: string }
+                  bold: { type: boolean }
+                  italic: { type: boolean }
+                  alignment: { type: string, enum: [left, center, right] }
+                  positionX: { type: number }
+                  positionY: { type: number }
+              effects:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    type: { type: string }
+                    name: { type: string }
+                    isEnabled: { type: boolean }
+                    parameters: { type: object }
+              keyframes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    property: { type: string }
+                    timeMs: { type: integer }
+                    value: { type: number }
+                    easing: { type: string }
+              audio:
+                type: object
+                properties:
+                  volume: { type: number }
+                  pan: { type: number }
+                  fadeInMs: { type: integer }
+                  fadeOutMs: { type: integer }
+                  isMuted: { type: boolean }
+                  pitch: { type: number }
+                  eq: { type: object }
+              captions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    startMs: { type: integer }
+                    endMs: { type: integer }
+                    text: { type: string }
+                    speaker: { type: string }
+
+    ConcurrencyConflictError:
+      type: object
+      description: "Structured conflict payload returned when client version/ETag is stale"
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+          example: "CONCURRENCY_CONFLICT"
+        message:
+          type: string
+          example: "Conflict: Project was modified by another session or device"
+        details:
+          type: object
+          required: [currentVersion, expectedVersion, serverUpdatedAt, serverETag]
+          properties:
+            currentVersion:
+              type: integer
+              description: "Latest version number on the server"
+              example: 3
+            expectedVersion:
+              type: integer
+              description: "Version the client attempted to update from"
+              example: 1
+            serverUpdatedAt:
+              type: string
+              format: date-time
+              description: "Timestamp of current server revision"
+            serverETag:
+              type: string
+              description: "Current server ETag token"
+              example: "\"v3-90d40523\""
+            conflictingDevice:
+              type: string
+              description: "Device name that saved the conflicting version, if known"
+              example: "Web Editor"
+
+    ProjectBackupSnapshot:
+      type: object
+      description: "Point-in-time snapshot of complete project state"
+      properties:
+        id: { type: string }
+        projectId: { type: string, format: uuid }
+        versionNumber: { type: integer }
+        changeSummary: { type: string }
+        isAutoSave: { type: boolean }
+        deviceName: { type: string }
+        createdAt: { type: string, format: date-time }

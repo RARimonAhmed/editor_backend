@@ -123,7 +123,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           env.NODE_ENV === 'production' && statusCode === 500
             ? 'An unexpected internal error occurred'
             : error.message,
-          undefined,
+          (error as any).details,
           reqId
         )
       );

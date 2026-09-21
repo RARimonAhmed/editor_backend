@@ -21,6 +21,76 @@ export const canvasSchema = baseCanvasSchema.transform((data) => ({
   backgroundColor: data.backgroundColor,
 }));
 
+export const clipTextSchema = z
+  .object({
+    content: z.string().default(''),
+    fontFamily: z.string().default('Inter'),
+    fontSize: z.number().positive().default(32),
+    fontWeight: z.string().default('normal'),
+    fontStyle: z.string().default('normal'),
+    color: z.string().default('#FFFFFF'),
+    backgroundColor: z.string().optional(),
+    outlineColor: z.string().optional(),
+    outlineWidth: z.number().nonnegative().optional(),
+    shadowColor: z.string().optional(),
+    alignment: z.enum(['left', 'center', 'right', 'justify']).default('center'),
+    letterSpacing: z.number().optional(),
+    lineHeight: z.number().optional(),
+  })
+  .passthrough();
+
+export const clipEffectSchema = z
+  .object({
+    id: z.string().optional(),
+    type: z.string(), // e.g. 'color_grading', 'blur', 'chroma_key', 'lut', 'vignette', 'glitch'
+    name: z.string().optional(),
+    enabled: z.boolean().default(true),
+    parameters: z.record(z.unknown()).default({}),
+  })
+  .passthrough();
+
+export const clipKeyframeSchema = z
+  .object({
+    id: z.string().optional(),
+    property: z.string(), // 'position' | 'scale' | 'rotation' | 'opacity' | 'volume'
+    timeMs: z.number().nonnegative(),
+    value: z.unknown(),
+    easing: z.string().default('linear'),
+  })
+  .passthrough();
+
+export const clipAudioSchema = z
+  .object({
+    volume: z.number().min(0).max(4).default(1.0),
+    gainDb: z.number().default(0),
+    pan: z.number().min(-1).max(1).default(0),
+    fadeInMs: z.number().nonnegative().default(0),
+    fadeOutMs: z.number().nonnegative().default(0),
+    pitchShift: z.number().default(0),
+    equalizer: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const clipCaptionSchema = z
+  .object({
+    id: z.string().optional(),
+    text: z.string(),
+    startMs: z.number().nonnegative(),
+    endMs: z.number().positive(),
+    speaker: z.string().optional(),
+    words: z
+      .array(
+        z.object({
+          word: z.string(),
+          startMs: z.number(),
+          endMs: z.number(),
+          confidence: z.number().optional(),
+        })
+      )
+      .optional(),
+  })
+  .passthrough();
+
 export const timelineClipSchema = z.preprocess(
   (val: any) => {
     if (!val || typeof val !== 'object') return val;
@@ -49,6 +119,11 @@ export const timelineClipSchema = z.preprocess(
       style: z.record(z.unknown()).optional(),
       transform: z.record(z.unknown()).optional(),
       transitions: z.record(z.unknown()).optional(),
+      text: clipTextSchema.optional(),
+      effects: z.array(clipEffectSchema).optional(),
+      keyframes: z.array(clipKeyframeSchema).optional(),
+      audio: clipAudioSchema.optional(),
+      captions: z.array(clipCaptionSchema).optional(),
     })
     .passthrough()
 );
@@ -65,11 +140,12 @@ export const timelineTrackSchema = z.preprocess(
   z
     .object({
       id: z.string(),
-      type: z.enum(['video', 'audio', 'text', 'effect', 'image', 'overlay']),
+      type: z.enum(['video', 'audio', 'text', 'effect', 'image', 'overlay', 'caption']),
       name: z.string().default('Track'),
       muted: z.boolean().default(false),
       locked: z.boolean().default(false),
       clips: z.array(timelineClipSchema).default([]),
+      effects: z.array(clipEffectSchema).optional(),
     })
     .passthrough()
 );
@@ -170,7 +246,7 @@ function preprocessProjectInput(val: any) {
   return data;
 }
 
-export const createProjectSchema = z.preprocess(
+export const createProjectSchema: z.ZodType<any> = z.preprocess(
   preprocessProjectInput,
   z
     .object({
@@ -190,7 +266,7 @@ export const createProjectSchema = z.preprocess(
     .passthrough()
 );
 
-export const updateProjectSchema = z.preprocess(
+export const updateProjectSchema: z.ZodType<any> = z.preprocess(
   preprocessProjectInput,
   z
     .object({
@@ -215,11 +291,13 @@ export const updateProjectSchema = z.preprocess(
     .passthrough()
 );
 
-export const autosaveProjectSchema = z.preprocess(
+export const autosaveProjectSchema: z.ZodType<any> = z.preprocess(
   preprocessProjectInput,
   z
     .object({
       baseVersion: z.number().int().positive('baseVersion is required for autosave conflict checking'),
+      clientMutationId: z.string().optional(),
+      clientTimestamp: z.string().optional(),
       canvas: baseCanvasSchema.partial().optional(),
       timeline: timelineDataSchema.optional(),
       timelineData: timelineDataSchema.optional(),
@@ -238,8 +316,24 @@ export const autosaveProjectSchema = z.preprocess(
     .passthrough()
 );
 
+export const renameProjectSchema = z.object({
+  title: z.string().min(1, 'Project title is required'),
+  expectedVersion: z.number().int().positive().optional(),
+});
+
 export const duplicateProjectSchema = z.object({
   newTitle: z.string().min(1).optional(),
+});
+
+export const createBackupSchema = z.object({
+  name: z.string().min(1).default('Project Backup Snapshot'),
+  description: z.string().max(1000).optional(),
+});
+
+export const deleteProjectQuerySchema = z.object({
+  permanent: z
+    .preprocess((val) => val === true || val === 'true', z.boolean())
+    .default(false),
 });
 
 export const listProjectsQuerySchema = z.object({
@@ -256,10 +350,18 @@ export type CanvasConfig = z.infer<typeof canvasSchema>;
 export type TimelineData = z.infer<typeof timelineDataSchema>;
 export type TimelineTrack = z.infer<typeof timelineTrackSchema>;
 export type TimelineClip = z.infer<typeof timelineClipSchema>;
+export type ClipText = z.infer<typeof clipTextSchema>;
+export type ClipEffect = z.infer<typeof clipEffectSchema>;
+export type ClipKeyframe = z.infer<typeof clipKeyframeSchema>;
+export type ClipAudio = z.infer<typeof clipAudioSchema>;
+export type ClipCaption = z.infer<typeof clipCaptionSchema>;
 export type ProjectAsset = z.infer<typeof projectAssetSchema>;
 export type ProjectSettings = z.infer<typeof projectSettingsSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type AutosaveProjectInput = z.infer<typeof autosaveProjectSchema>;
+export type RenameProjectInput = z.infer<typeof renameProjectSchema>;
 export type DuplicateProjectInput = z.infer<typeof duplicateProjectSchema>;
+export type CreateBackupInput = z.infer<typeof createBackupSchema>;
+export type DeleteProjectQuery = z.infer<typeof deleteProjectQuerySchema>;
 export type ListProjectsQuery = z.infer<typeof listProjectsQuerySchema>;

@@ -6,6 +6,9 @@ import {
   autosaveProjectSchema,
   duplicateProjectSchema,
   listProjectsQuerySchema,
+  renameProjectSchema,
+  createBackupSchema,
+  deleteProjectQuerySchema,
 } from './projects.schemas.js';
 import { createSuccessResponse } from '../../core/response.js';
 import { ValidationError } from '../../core/errors.js';
@@ -74,7 +77,7 @@ export class ProjectsController {
     );
   }
 
-  // PATCH /v1/projects/:id & PUT /v1/projects/:id (Update / Rename with concurrency check)
+  // PATCH /v1/projects/:id & PUT /v1/projects/:id (Update with concurrency check)
   async update(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
     const parseResult = updateProjectSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -89,6 +92,33 @@ export class ProjectsController {
       userId,
       parseResult.data,
       ifMatchHeader
+    );
+
+    reply.header('ETag', updated.etag);
+    reply.header('Last-Modified', new Date(updated.updatedAt).toUTCString());
+
+    return reply.status(200).send(
+      createSuccessResponse(updated, {
+        projectVersion: updated.version,
+        etag: updated.etag,
+        updatedAt: updated.updatedAt,
+      })
+    );
+  }
+
+  // PATCH /v1/projects/:id/rename
+  async rename(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const parseResult = renameProjectSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      throw new ValidationError('Invalid rename parameters', parseResult.error.format());
+    }
+
+    const userId = request.user!.userId;
+    const updated = await projectsService.rename(
+      request.params.id,
+      userId,
+      parseResult.data.title,
+      parseResult.data.expectedVersion
     );
 
     reply.header('ETag', updated.etag);
@@ -154,11 +184,26 @@ export class ProjectsController {
     return reply.status(200).send(createSuccessResponse(restored));
   }
 
-  // DELETE /v1/projects/:id (Soft delete)
-  async delete(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+  // DELETE /v1/projects/:id (Soft-delete or permanent delete via ?permanent=true)
+  async delete(
+    request: FastifyRequest<{ Params: { id: string }; Querystring: { permanent?: string | boolean } }>,
+    reply: FastifyReply
+  ) {
     const userId = request.user!.userId;
-    await projectsService.delete(request.params.id, userId);
-    return reply.status(200).send(createSuccessResponse({ deleted: true, id: request.params.id }));
+    const isPermanent = request.query?.permanent === true || request.query?.permanent === 'true';
+    await projectsService.delete(request.params.id, userId, isPermanent);
+    return reply
+      .status(200)
+      .send(createSuccessResponse({ deleted: true, permanent: isPermanent, id: request.params.id }));
+  }
+
+  // POST /v1/projects/:id/permanent-delete
+  async permanentDelete(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const userId = request.user!.userId;
+    await projectsService.permanentDelete(request.params.id, userId);
+    return reply
+      .status(200)
+      .send(createSuccessResponse({ deleted: true, permanent: true, id: request.params.id }));
   }
 
   // GET /v1/projects/:id/versions
@@ -166,6 +211,30 @@ export class ProjectsController {
     const userId = request.user!.userId;
     const versions = await projectsService.getVersionHistory(request.params.id, userId);
     return reply.status(200).send(createSuccessResponse(versions, { total: versions.length }));
+  }
+
+  // POST /v1/projects/:id/snapshots (Create backup snapshot)
+  async createSnapshot(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const parseResult = createBackupSchema.safeParse(request.body || {});
+    if (!parseResult.success) {
+      throw new ValidationError('Invalid backup snapshot parameters', parseResult.error.format());
+    }
+
+    const userId = request.user!.userId;
+    const snapshot = await projectsService.createBackupSnapshot(
+      request.params.id,
+      userId,
+      parseResult.data.name,
+      parseResult.data.description
+    );
+    return reply.status(201).send(createSuccessResponse(snapshot));
+  }
+
+  // GET /v1/projects/:id/snapshots (List backup snapshots)
+  async listSnapshots(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) {
+    const userId = request.user!.userId;
+    const snapshots = await projectsService.getBackupSnapshots(request.params.id, userId);
+    return reply.status(200).send(createSuccessResponse(snapshots, { total: snapshots.length }));
   }
 }
 

@@ -45,6 +45,7 @@ export interface ProjectDocument {
   id: string;
   userId: string;
   title: string;
+  description?: string | null;
   status: 'active' | 'archived' | 'deleted';
   version: number;
   projectVersion: number;
@@ -80,6 +81,10 @@ export interface ProjectDocument {
   durationMs?: number;
   tracks?: any[];
   markers?: any[];
+
+  // Idempotency & Search fields
+  lastMutationId?: string;
+  tags?: string[];
 }
 
 export function enrichProjectForFlutter(doc: ProjectDocument): ProjectDocument {
@@ -110,6 +115,7 @@ export function enrichProjectForFlutter(doc: ProjectDocument): ProjectDocument {
 
   return {
     ...doc,
+    description: doc.metadata?.description || null,
     schemaVersion: (doc as any).schemaVersion || 1,
     resolution: { width, height },
     frameRate,
@@ -278,6 +284,31 @@ export class ProjectsService {
   }
 
   // ============================================================================
+  // RBAC & MEMBERSHIP PERMISSION HELPER
+  // ============================================================================
+  async checkProjectAccess(
+    project: ProjectDocument,
+    userId: string,
+    permission:
+      | 'project:view'
+      | 'project:delete'
+      | 'project:archive'
+      | 'timeline:edit'
+      | 'version:create'
+      | 'version:restore' = 'project:view'
+  ): Promise<boolean> {
+    if (project.userId === userId) {
+      return true;
+    }
+    try {
+      const { collaborationService } = await import('../collaboration/collaboration.service.js');
+      return await collaborationService.hasPermission(project.id, userId, permission);
+    } catch {
+      return false;
+    }
+  }
+
+  // ============================================================================
   // OPEN / GET BY ID
   // ============================================================================
   async getById(id: string, userId: string): Promise<ProjectDocument> {
@@ -286,7 +317,8 @@ export class ProjectsService {
       throw new NotFoundError(`Project not found: ${id}`);
     }
 
-    if (project.userId !== userId) {
+    const hasAccess = await this.checkProjectAccess(project, userId, 'project:view');
+    if (!hasAccess) {
       throw new ForbiddenError('You do not have permission to access this project');
     }
 
@@ -302,7 +334,15 @@ export class ProjectsService {
     input: UpdateProjectInput,
     ifMatchHeader?: string
   ): Promise<ProjectDocument> {
-    const project = await this.getById(id, userId);
+    const project = mockProjects.get(id);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${id}`);
+    }
+
+    const hasAccess = await this.checkProjectAccess(project, userId, 'timeline:edit');
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have permission to edit this project');
+    }
 
     // 1. Concurrency Check
     this.verifyConcurrency(project, input.expectedVersion ?? input.baseVersion, ifMatchHeader);
@@ -409,7 +449,7 @@ export class ProjectsService {
            SET title = $1, description = $2, resolution_width = $3, resolution_height = $4,
                framerate = $5, aspect_ratio = $6, version_number = $7, status = $8,
                thumbnail_url = $9, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $10 AND owner_id = $11;`,
+           WHERE id = $10;`,
           [
             newTitle,
             newDescription,
@@ -421,7 +461,6 @@ export class ProjectsService {
             newStatus,
             newThumbnail,
             id,
-            userId,
           ]
         );
       }
@@ -433,12 +472,35 @@ export class ProjectsService {
   }
 
   // ============================================================================
-  // AUTOSAVE SYNC (NON-DESTRUCTIVE CONCURRENCY PROTECTED)
+  // AUTOSAVE SYNC (IDEMPOTENT, DEBOUNCED, RETRY-SAFE)
   // ============================================================================
   async autosave(id: string, userId: string, input: AutosaveProjectInput): Promise<ProjectDocument> {
-    const project = await this.getById(id, userId);
+    const project = mockProjects.get(id);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${id}`);
+    }
 
-    // Concurrency Check: must match baseVersion
+    const hasAccess = await this.checkProjectAccess(project, userId, 'timeline:edit');
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have permission to edit this project');
+    }
+
+    // 1. Idempotency Check: if exact mutation was already processed, return existing project without error
+    if (input.clientMutationId && project.lastMutationId === input.clientMutationId) {
+      return enrichProjectForFlutter(project);
+    }
+
+    // 2. Retry Safety: If client is retrying an autosave where baseVersion matches project.version - 1,
+    // and the incoming timeline payload matches current timeline state, return cleanly
+    if (project.version === input.baseVersion + 1 && (input.timeline || input.timelineData)) {
+      const currentTl = JSON.stringify(project.timeline);
+      const incomingTl = JSON.stringify(input.timeline || input.timelineData);
+      if (currentTl === incomingTl) {
+        return enrichProjectForFlutter(project);
+      }
+    }
+
+    // 3. Concurrency Check: must match baseVersion
     this.verifyConcurrency(project, input.baseVersion);
 
     const now = new Date().toISOString();
@@ -481,6 +543,7 @@ export class ProjectsService {
       projectVersion: newVersionNumber,
       updatedAt: now,
       etag: newETag,
+      lastMutationId: input.clientMutationId,
       metadata: {
         ...project.metadata,
         updatedAt: now,
@@ -508,7 +571,28 @@ export class ProjectsService {
     };
 
     mockProjects.set(id, updatedProject);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE projects
+           SET version_number = $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2;`,
+          [newVersionNumber, id]
+        );
+      }
+    } catch {
+      // fallback
+    }
+
     return enrichProjectForFlutter(updatedProject);
+  }
+
+  // ============================================================================
+  // RENAME PROJECT
+  // ============================================================================
+  async rename(id: string, userId: string, newTitle: string, expectedVersion?: number): Promise<ProjectDocument> {
+    return this.update(id, userId, { title: newTitle, expectedVersion });
   }
 
   // ============================================================================
@@ -533,16 +617,70 @@ export class ProjectsService {
   // ARCHIVE PROJECT
   // ============================================================================
   async archive(id: string, userId: string): Promise<ProjectDocument> {
+    const project = mockProjects.get(id);
+    if (!project) throw new NotFoundError(`Project not found: ${id}`);
+    const hasAccess = await this.checkProjectAccess(project, userId, 'project:archive');
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have permission to archive this project');
+    }
     return this.update(id, userId, { status: 'archived' });
   }
 
   // ============================================================================
-  // SOFT-DELETE PROJECT
+  // RESTORE PROJECT
   // ============================================================================
-  async delete(id: string, userId: string): Promise<void> {
-    const project = await this.getById(id, userId);
-    const now = new Date().toISOString();
+  async restore(id: string, userId: string): Promise<ProjectDocument> {
+    const project = mockProjects.get(id);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${id}`);
+    }
 
+    const hasAccess = await this.checkProjectAccess(project, userId, 'project:archive');
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have permission to restore this project');
+    }
+
+    const now = new Date().toISOString();
+    project.status = 'active';
+    project.metadata.status = 'active';
+    project.metadata.deletedAt = null;
+    project.updatedAt = now;
+
+    mockProjects.set(id, project);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE projects
+           SET status = 'active', deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1;`,
+          [id]
+        );
+      }
+    } catch {
+      // fallback
+    }
+
+    return enrichProjectForFlutter(project);
+  }
+
+  // ============================================================================
+  // DELETE / SOFT-DELETE / PERMANENT DELETE PROJECT
+  // ============================================================================
+  async delete(id: string, userId: string, permanent = false): Promise<void> {
+    const project = mockProjects.get(id);
+    if (!project) throw new NotFoundError(`Project not found: ${id}`);
+
+    const hasAccess = await this.checkProjectAccess(project, userId, 'project:delete');
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have permission to delete this project');
+    }
+
+    if (permanent) {
+      return this.permanentDelete(id, userId);
+    }
+
+    const now = new Date().toISOString();
     project.status = 'deleted';
     project.metadata.status = 'deleted';
     project.metadata.deletedAt = now;
@@ -555,8 +693,8 @@ export class ProjectsService {
         await db.query(
           `UPDATE projects
            SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1 AND owner_id = $2;`,
-          [id, userId]
+           WHERE id = $1;`,
+          [id]
         );
       }
     } catch {
@@ -565,26 +703,55 @@ export class ProjectsService {
   }
 
   // ============================================================================
-  // RESTORE PROJECT
+  // PERMANENT DELETE PROJECT
   // ============================================================================
-  async restore(id: string, userId: string): Promise<ProjectDocument> {
+  async permanentDelete(id: string, userId: string): Promise<void> {
     const project = mockProjects.get(id);
-    if (!project) {
-      throw new NotFoundError(`Project not found: ${id}`);
+    if (!project) throw new NotFoundError(`Project not found: ${id}`);
+
+    const hasAccess = await this.checkProjectAccess(project, userId, 'project:delete');
+    if (!hasAccess) {
+      throw new ForbiddenError('You do not have permission to permanently delete this project');
     }
 
-    if (project.userId !== userId) {
-      throw new ForbiddenError('You do not have permission to restore this project');
+    mockProjects.delete(id);
+    mockVersionHistory.delete(id);
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(`DELETE FROM projects WHERE id = $1;`, [id]);
+      }
+    } catch {
+      // fallback
     }
+  }
 
-    const now = new Date().toISOString();
-    project.status = 'active';
-    project.metadata.status = 'active';
-    project.metadata.deletedAt = null;
-    project.updatedAt = now;
+  // ============================================================================
+  // PROJECT SNAPSHOT BACKUP INTEGRATION
+  // ============================================================================
+  async createBackupSnapshot(
+    id: string,
+    userId: string,
+    name = 'Project Backup Snapshot',
+    description?: string
+  ): Promise<any> {
+    const { reviewService } = await import('./review/review.service.js');
+    return reviewService.createSnapshot(id, userId, { name, description });
+  }
 
-    mockProjects.set(id, project);
-    return project;
+  async getBackupSnapshots(id: string, userId: string): Promise<any[]> {
+    const { reviewService } = await import('./review/review.service.js');
+    return reviewService.listSnapshots(id, userId);
+  }
+
+  async restoreBackupSnapshot(
+    id: string,
+    userId: string,
+    versionNumber: number,
+    expectedVersion?: number
+  ): Promise<any> {
+    const { reviewService } = await import('./review/review.service.js');
+    return reviewService.restoreSnapshot(id, versionNumber, userId, expectedVersion);
   }
 
   // ============================================================================
@@ -594,26 +761,40 @@ export class ProjectsService {
     userId: string,
     query: ListProjectsQuery = { status: 'active', limit: 20, offset: 0, sortBy: 'updatedAt', sortOrder: 'desc' }
   ): Promise<{ projects: ProjectDocument[]; total: number }> {
-    let userProjects = Array.from(mockProjects.values()).filter((p) => p.userId === userId);
+    const allProjects = Array.from(mockProjects.values());
+    let userProjects: ProjectDocument[] = [];
 
-    // 1. Status Filter
+    // 1. Gather all projects where user is owner or collaborator
+    for (const p of allProjects) {
+      if (p.userId === userId) {
+        userProjects.push(p);
+      } else {
+        const hasAccess = await this.checkProjectAccess(p, userId, 'project:view');
+        if (hasAccess) {
+          userProjects.push(p);
+        }
+      }
+    }
+
+    // 2. Status Filter
     if (query.status !== 'all') {
       userProjects = userProjects.filter((p) => p.status === query.status);
     }
 
-    // 2. Search Term Filter
+    // 3. Search Term Filter
     const searchTerm = (query.search || query.q || '').trim().toLowerCase();
     if (searchTerm.length > 0) {
       userProjects = userProjects.filter((p) => {
         const titleMatch = p.title.toLowerCase().includes(searchTerm);
         const descMatch = p.metadata.description?.toLowerCase().includes(searchTerm);
-        return titleMatch || Boolean(descMatch);
+        const tagsMatch = (p.tags || []).some((t) => t.toLowerCase().includes(searchTerm));
+        return titleMatch || Boolean(descMatch) || tagsMatch;
       });
     }
 
     const total = userProjects.length;
 
-    // 3. Sorting
+    // 4. Sorting
     userProjects.sort((a, b) => {
       let fieldA: string | number = a.updatedAt;
       let fieldB: string | number = b.updatedAt;
@@ -632,7 +813,7 @@ export class ProjectsService {
       return fieldA < fieldB ? 1 : -1;
     });
 
-    // 4. Pagination
+    // 5. Pagination
     const paginated = userProjects.slice(query.offset, query.offset + query.limit);
 
     return {

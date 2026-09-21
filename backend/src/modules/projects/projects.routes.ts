@@ -97,6 +97,26 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     projectsController.update.bind(projectsController)
   );
 
+  // 4b. Rename Project
+  fastify.patch(
+    '/:id/rename',
+    {
+      schema: {
+        description: 'Rename video project title (concurrency protected)',
+        tags: ['Projects'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    projectsController.rename.bind(projectsController)
+  );
+
   // 5. Autosave Cloud Sync (Non-destructive)
   fastify.post(
     '/:id/autosave',
@@ -190,12 +210,38 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     projectsController.restore.bind(projectsController)
   );
 
-  // 9. Delete Project (Soft-delete)
+  // 9. Delete Project (Soft-delete or permanent)
   fastify.delete(
     '/:id',
     {
       schema: {
-        description: 'Soft-delete video project (recoverable via restore)',
+        description: 'Soft-delete video project (or permanent delete with ?permanent=true)',
+        tags: ['Projects'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            permanent: { type: 'boolean', default: false },
+          },
+        },
+      },
+    },
+    projectsController.delete.bind(projectsController)
+  );
+
+  // 9b. Permanent Delete Project
+  fastify.post(
+    '/:id/permanent-delete',
+    {
+      schema: {
+        description: 'Permanently delete video project and all associated timelines/versions',
         tags: ['Projects'],
         security: [{ bearerAuth: [] }],
         params: {
@@ -207,7 +253,32 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         },
       },
     },
-    projectsController.delete.bind(projectsController)
+    projectsController.permanentDelete.bind(projectsController)
+  );
+
+  // 9c. Project Snapshots / Backup Aliases
+  fastify.post(
+    '/:id/snapshots',
+    {
+      schema: {
+        description: 'Create an immutable backup snapshot of project state',
+        tags: ['Projects'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    projectsController.createSnapshot.bind(projectsController)
+  );
+
+  fastify.get(
+    '/:id/snapshots',
+    {
+      schema: {
+        description: 'List immutable backup snapshots for project',
+        tags: ['Projects'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    projectsController.listSnapshots.bind(projectsController)
   );
 
   // 10. Version History
