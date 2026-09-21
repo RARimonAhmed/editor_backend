@@ -5,6 +5,7 @@ export interface SystemProbe {
   status: SystemProbeStatus;
   latencyMs: number;
   lastChecked: string;
+  errorSummary?: string | null;
   details?: Record<string, unknown>;
 }
 
@@ -315,7 +316,13 @@ export interface AdminAuditLogEntry {
   id: string;
   action: string;
   actorId: string;
+  actorEmail?: string;
+  resource?: string;
+  resourceId?: string;
   targetId?: string;
+  targetType?: string;
+  ipAddress?: string;
+  result?: 'SUCCESS' | 'FAILED' | 'DENIED' | string;
   timestamp: string;
   details?: Record<string, unknown>;
 }
@@ -503,3 +510,146 @@ export interface AdminCreditTransactionView {
   description: string;
   createdAt: string;
 }
+
+export interface AdminCreditWalletView {
+  userId: string;
+  email: string;
+  name?: string;
+  balance: number;
+  subscriptionTier: string;
+  lastActive: string;
+  totalConsumed: number;
+  totalIssued: number;
+}
+
+export interface AdminSuspiciousCreditFailure {
+  id: string;
+  userId: string;
+  userEmail?: string;
+  reason: string;
+  timestamp: string;
+  attemptedAmount: number;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  anomalyType: 'INSUFFICIENT_CREDITS' | 'BURST_ATTEMPT' | 'NEGATIVE_EXPLOIT' | 'REVOKED_WALLET';
+}
+
+export interface AdminCreditsTelemetryReport {
+  totalIssued: number;
+  totalConsumed: number;
+  totalRefunded: number;
+  totalCirculatingCredits: number;
+  totalWallets: number;
+  wallets: AdminCreditWalletView[];
+  balances: Array<{ userId: string; email: string; balance: number }>;
+  ledger: AdminCreditTransactionView[];
+  suspiciousFailures: AdminSuspiciousCreditFailure[];
+}
+
+export interface AdminWebhookStatusReport {
+  status: 'HEALTHY' | 'DEGRADED' | 'DOWN';
+  endpoint: string;
+  lastEventReceived: string;
+  lastEventType: string;
+  pendingEvents: number;
+  failureCount: number;
+  latencyMs: number;
+}
+
+export interface AdminSubscriptionsReport {
+  totalSubscribers: number;
+  tierBreakdown: {
+    free: number;
+    pro: number;
+    studio: number;
+  };
+  statusBreakdown: {
+    active: number;
+    trialing: number;
+    cancelled: number;
+    expired: number;
+  };
+  estimatedMrrUsd: number;
+  webhookStatus: AdminWebhookStatusReport;
+  availablePlans: any[];
+  subscriptions: AdminSubscriptionView[];
+}
+
+export interface AdminOperationalSettings {
+  server: {
+    nodeEnv: string;
+    host: string;
+    port: number;
+    corsOrigins: string[];
+    rateLimitMax: number;
+    rateLimitWindowMs: number;
+    logLevel: string;
+  };
+  database: {
+    driver: 'postgresql';
+    host: string;
+    port: number;
+    databaseName: string;
+    poolSize: number;
+    ssl: boolean;
+    authConfigured: boolean;
+    status: 'CONFIGURED' | 'MISSING';
+  };
+  redis: {
+    host: string;
+    port: number;
+    clusterMode: boolean;
+    tls: boolean;
+    authConfigured: boolean;
+    status: 'CONFIGURED' | 'FALLBACK_MEMORY';
+  };
+  storage: {
+    driver: string;
+    bucket: string;
+    region: string;
+    endpoint: string;
+    credentialsStatus: 'CONFIGURED' | 'MISSING';
+    presignedUrlExpirySeconds: number;
+  };
+  aiGateway: {
+    geminiStatus: 'CONFIGURED' | 'MISSING';
+    geminiModel: string;
+    openaiStatus: 'CONFIGURED' | 'MISSING';
+    openaiModel: string;
+    anthropicStatus: 'CONFIGURED' | 'MISSING';
+    runwayStatus: 'CONFIGURED' | 'MISSING';
+    automaticFailover: boolean;
+  };
+  billing: {
+    stripeStatus: 'CONFIGURED' | 'MISSING';
+    webhookSecretStatus: 'CONFIGURED' | 'MISSING';
+    defaultTrialCredits: number;
+    creditRatioUsd: number;
+  };
+  security: {
+    jwtAlgorithm: string;
+    jwtSecretStatus: 'CONFIGURED' | 'DEFAULT_DEV';
+    adminApiKeyStatus: 'CONFIGURED' | 'UNPROTECTED';
+    sessionTtlMinutes: number;
+    csrfProtection: boolean;
+  };
+  mediaProcessing: {
+    ffmpegPath: string;
+    ffprobePath: string;
+    maxUploadSizeBytes: number;
+    maxConcurrency: number;
+    hardwareAcceleration: string;
+    supportedFormats: string[];
+  };
+}
+
+export interface UpdateOperationalSettingsDto {
+  rateLimitMax?: number;
+  rateLimitWindowMs?: number;
+  logLevel?: string;
+  presignedUrlExpirySeconds?: number;
+  automaticFailover?: boolean;
+  defaultTrialCredits?: number;
+  maxUploadSizeBytes?: number;
+  maxConcurrency?: number;
+}
+

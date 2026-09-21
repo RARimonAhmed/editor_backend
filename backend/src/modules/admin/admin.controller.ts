@@ -202,7 +202,7 @@ export class AdminController {
       limit,
       pageSize: limit,
     });
-    return reply.status(200).send(createSuccessResponse(result.jobs));
+    return reply.status(200).send(createSuccessResponse({ failedJobs: result.jobs, jobs: result.jobs, total: result.total }));
   }
 
   async getUsage(request: FastifyRequest, reply: FastifyReply) {
@@ -242,6 +242,21 @@ export class AdminController {
   async getSystemHealth(_request: FastifyRequest, reply: FastifyReply) {
     const health = await adminService.getSystemHealthReport();
     return reply.status(200).send(createSuccessResponse(health));
+  }
+
+  async getSettings(_request: FastifyRequest, reply: FastifyReply) {
+    const settings = await adminService.getSafeSettings();
+    return reply.status(200).send(createSuccessResponse(settings));
+  }
+
+  async updateSettings(request: FastifyRequest, reply: FastifyReply) {
+    const user = (request as any).user;
+    if (user?.role !== 'SUPERADMIN') {
+      throw new ForbiddenError('SUPERADMIN authorization required to modify system operational settings');
+    }
+    const body = (request.body || {}) as any;
+    const updated = await adminService.updateSafeSettings(body, user?.userId || 'admin', request.ip);
+    return reply.status(200).send(createSuccessResponse(updated));
   }
 
   async listMedia(request: FastifyRequest, reply: FastifyReply) {

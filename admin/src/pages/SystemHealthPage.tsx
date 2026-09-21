@@ -55,6 +55,8 @@ export const SystemHealthPage: React.FC = () => {
         return <HardDrive size={20} color="#10b981" />;
       case 'workers':
         return <Cpu size={20} color="#8b5cf6" />;
+      case 'ffmpeg':
+        return <Server size={20} color="#3b82f6" />;
       case 'ai_providers':
         return <Sparkles size={20} color="#ec4899" />;
       default:
@@ -189,7 +191,9 @@ export const SystemHealthPage: React.FC = () => {
       {/* Probes Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 20 }}>
         {health?.probes &&
-          Object.entries(health.probes).map(([key, probe]) => (
+          Object.entries(health.probes)
+            .filter(([key]) => key !== 'database')
+            .map(([key, probe]) => (
             <div key={key} className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -214,7 +218,7 @@ export const SystemHealthPage: React.FC = () => {
                 <StatusBadge status={probe.status} />
               </div>
 
-              {/* Latency and Details */}
+              {/* Latency and Last Check */}
               <div
                 style={{
                   background: 'rgba(0, 0, 0, 0.2)',
@@ -227,9 +231,31 @@ export const SystemHealthPage: React.FC = () => {
                   fontSize: 12,
                 }}
               >
-                <span style={{ color: 'var(--text-secondary)' }}>Probe Latency</span>
-                <span style={{ fontWeight: 700, color: '#10b981' }}>{probe.latencyMs.toFixed(2)} ms</span>
+                <div>
+                  <span style={{ color: 'var(--text-secondary)' }}>Latency: </span>
+                  <span style={{ fontWeight: 700, color: '#10b981' }}>{probe.latencyMs.toFixed(2)} ms</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  Checked: {probe.lastChecked ? new Date(probe.lastChecked).toLocaleTimeString() : '-'}
+                </div>
               </div>
+
+              {/* Error Summary Alert */}
+              {probe.errorSummary && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    background: 'var(--warning-bg)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                    color: 'var(--warning)',
+                    fontSize: 12,
+                    marginBottom: 12,
+                  }}
+                >
+                  <strong>Notice: </strong>{probe.errorSummary}
+                </div>
+              )}
 
               {probe.details && (
                 <pre

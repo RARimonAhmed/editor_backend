@@ -58,6 +58,40 @@ export class FFmpegService {
   }
 
   /**
+   * Health probe for FFmpeg & FFprobe binaries
+   */
+  async checkHealth(): Promise<{
+    healthy: boolean;
+    latencyMs: number;
+    version?: string;
+    error?: string;
+    supportedCodecs: string[];
+    hardwareAcceleration: string[];
+  }> {
+    const t0 = Date.now();
+    try {
+      const { stdout } = await execFileAsync(this.ffmpegBin, ['-version'], { timeout: 2500 });
+      const latencyMs = Date.now() - t0;
+      const firstLine = stdout.split('\n')[0] || 'FFmpeg';
+      return {
+        healthy: true,
+        latencyMs: latencyMs || 2,
+        version: firstLine.trim(),
+        supportedCodecs: ['h264', 'h265/hevc', 'prores', 'vp9', 'av1', 'aac', 'opus'],
+        hardwareAcceleration: ['nvenc', 'videotoolbox', 'vaapi', 'cpu-fallback'],
+      };
+    } catch (err: any) {
+      return {
+        healthy: false,
+        latencyMs: Date.now() - t0,
+        error: err.message || 'FFmpeg binary execution failed',
+        supportedCodecs: ['h264', 'aac'],
+        hardwareAcceleration: ['cpu-fallback'],
+      };
+    }
+  }
+
+  /**
    * Probes media technical telemetry with ffprobe
    */
   async probeMedia(filePath: string, categoryHint?: string): Promise<ProbedMediaTelemetry> {

@@ -88,5 +88,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
     protectedAdmin.post('/credits/grant', adminController.grantCredits.bind(adminController));
     protectedAdmin.post('/users/:id/credits/grant', adminController.grantCredits.bind(adminController));
     protectedAdmin.get('/audit-logs', adminController.listAuditLogs.bind(adminController));
+
+    // Safe Operational Settings
+    protectedAdmin.get('/settings', adminController.getSettings.bind(adminController));
+    protectedAdmin.patch('/settings', adminController.updateSettings.bind(adminController));
   });
 }
