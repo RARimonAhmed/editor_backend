@@ -47,7 +47,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
     // Core platform resources
     protectedAdmin.get('/users', adminController.listUsers.bind(adminController));
+    protectedAdmin.get('/users/:id', adminController.getUserDetails.bind(adminController));
     protectedAdmin.patch('/users/:id/role', adminController.updateUserRole.bind(adminController));
+    protectedAdmin.patch('/users/:id/status', adminController.updateUserStatus.bind(adminController));
+    protectedAdmin.post('/users/:id/revoke-sessions', adminController.revokeUserSessions.bind(adminController));
     protectedAdmin.get('/projects', adminController.listProjects.bind(adminController));
     protectedAdmin.get('/media', adminController.listMedia.bind(adminController));
     protectedAdmin.get('/comments', adminController.listComments.bind(adminController));

@@ -65,8 +65,8 @@ interface StoredEmailVerification {
 
 // In-memory repositories for local/mock/test execution
 export const mockUsers = new Map<string, User>();
-const mockProfiles = new Map<string, Record<string, any>>();
-const mockSessions = new Map<string, StoredSession>();
+export const mockProfiles = new Map<string, Record<string, any>>();
+export const mockSessions = new Map<string, StoredSession>();
 const mockPasswordResets = new Map<string, StoredPasswordReset>();
 const mockEmailVerifications = new Map<string, StoredEmailVerification>();
 const mockFailedLogins = new Map<string, { count: number; lockedUntil?: number }>();
@@ -367,6 +367,69 @@ export class AuthService {
     if (session.isRevoked) return false;
     if (new Date() > session.expiresAt) return false;
     return true;
+  }
+
+  getUserSessions(userId: string) {
+    const sessions = [];
+    const now = new Date();
+    for (const session of mockSessions.values()) {
+      if (session.userId === userId) {
+        sessions.push({
+          id: session.id,
+          deviceId: session.deviceId,
+          ipAddress: session.ipAddress,
+          userAgent: session.userAgent,
+          createdAt: session.createdAt.toISOString(),
+          updatedAt: session.updatedAt.toISOString(),
+          expiresAt: session.expiresAt.toISOString(),
+          isRevoked: Boolean(session.isRevoked),
+          isActive: !session.isRevoked && now <= session.expiresAt,
+        });
+      }
+    }
+    return sessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  revokeUserSessions(userId: string): number {
+    let count = 0;
+    for (const session of mockSessions.values()) {
+      if (session.userId === userId && !session.isRevoked) {
+        session.isRevoked = true;
+        count++;
+      }
+    }
+    logger.info({ userId, count }, 'Revoked all active sessions for user');
+    return count;
+  }
+
+  revokeSingleSession(sessionId: string, userId?: string): boolean {
+    const session = mockSessions.get(sessionId);
+    if (!session) return false;
+    if (userId && session.userId !== userId) return false;
+    session.isRevoked = true;
+    return true;
+  }
+
+  getUserProfileExtended(userId: string) {
+    const user = mockUsers.get(userId);
+    const profile = mockProfiles.get(userId) || {};
+    if (!user) return null;
+    return {
+      id: user.id,
+      displayName: user.display_name || profile.displayName || user.email.split('@')[0],
+      email: user.email,
+      avatarUrl: user.avatar_url || profile.avatarUrl || null,
+      role: user.role || 'USER',
+      status: user.status || 'active',
+      emailVerified: Boolean(user.email_verified_at),
+      createdAt: user.created_at || new Date().toISOString(),
+      updatedAt: user.updated_at || new Date().toISOString(),
+      lastLoginAt: (user as any).lastLoginAt || (user as any).last_login_at || profile.lastLoginAt,
+      bio: profile.bio || null,
+      timezone: profile.timezone || 'UTC',
+      locale: profile.locale || 'en-US',
+      preferences: profile.preferences || { theme: 'dark' },
+    };
   }
 
   // ============================================================================

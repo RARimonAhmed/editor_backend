@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import {
   AdminUserView,
+  AdminUserDetailView,
+  AdminUsersQueryParams,
   AdminProjectView,
   AdminUsageReport,
   AdminAuditLogEntry,
@@ -11,7 +13,7 @@ import {
   AdminCommentView,
   SystemProbeStatus,
 } from './admin.types.js';
-import { mockUsers } from '../auth/auth.service.js';
+import { mockUsers, authService } from '../auth/auth.service.js';
 import { mockProjects } from '../projects/projects.service.js';
 import { mockAIJobs, aiJobService } from '../ai/jobs/ai-job.service.js';
 import { mockJobs } from '../jobs/jobs.service.js';
@@ -24,7 +26,7 @@ import { env } from '../../config/env.js';
 import { storageService } from '../../services/storage/index.js';
 import { redisService } from '../../services/redis/index.js';
 import { db } from '../../database/client.js';
-import { NotFoundError, ValidationError } from '../../core/errors.js';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../core/errors.js';
 import { logger } from '../../core/logger.js';
 
 // In-memory audit log ledger
@@ -68,32 +70,254 @@ export const mockComments: AdminCommentView[] = [
 
 export class AdminService {
   /**
-   * List platform users with balances and subscriptions
+   * Helper to map user object to AdminUserView with real telemetry counts
    */
-  async listUsers(limit = 50, offset = 0, search?: string): Promise<{ users: AdminUserView[]; total: number }> {
-    let all: any[] = Array.from(mockUsers.values());
+  toAdminUserView(u: any): AdminUserView {
+    const balance = mockCreditBalances.get(u.id) ?? 100;
+    const projectCount = Array.from(mockProjects.values()).filter((p: any) => p.userId === u.id).length;
+    const createdAt = u.created_at || u.createdAt || new Date().toISOString();
+    const updatedAt = u.updated_at || u.updatedAt || createdAt;
+    const lastLoginAt = u.lastLoginAt || (u as any).last_login_at || updatedAt;
+    const displayName = u.display_name || u.displayName || u.email?.split('@')[0] || 'User';
 
-    if (search) {
-      const q = search.toLowerCase();
-      all = all.filter((u: any) => u.email?.toLowerCase().includes(q) || u.id.includes(q));
+    return {
+      id: u.id,
+      displayName,
+      email: u.email,
+      role: (u.role || 'USER').toUpperCase(),
+      status: u.status || 'active',
+      creditBalance: balance,
+      subscriptionTier: u.subscriptionTier || 'free',
+      projectsCount: projectCount,
+      createdAt,
+      updatedAt,
+      lastLoginAt,
+      avatarUrl: u.avatar_url || u.avatarUrl || null,
+    };
+  }
+
+  /**
+   * List platform users with server-side search, filtering, sorting, and pagination
+   */
+  async listUsers(
+    paramsOrLimit: AdminUsersQueryParams | number = 50,
+    offsetArg = 0,
+    searchArg?: string
+  ): Promise<{ users: AdminUserView[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    let params: AdminUsersQueryParams;
+    if (typeof paramsOrLimit === 'object' && paramsOrLimit !== null) {
+      params = paramsOrLimit;
+    } else {
+      params = {
+        limit: paramsOrLimit,
+        offset: offsetArg,
+        search: searchArg,
+      };
     }
 
-    const total = all.length;
-    const paginated: AdminUserView[] = all.slice(offset, offset + limit).map((u: any) => {
-      const balance = mockCreditBalances.get(u.id);
-      return {
-        id: u.id,
-        email: u.email,
-        role: u.role || 'USER',
-        status: u.status || 'active',
-        creditBalance: balance !== undefined ? balance : 100,
-        subscriptionTier: u.subscriptionTier || 'free',
-        createdAt: u.createdAt || new Date().toISOString(),
-        lastLoginAt: u.lastLoginAt,
-      };
+    const limit = params.pageSize || params.limit || 50;
+    let offset = params.offset !== undefined ? params.offset : 0;
+    if (params.page !== undefined && params.pageSize !== undefined) {
+      offset = (params.page - 1) * params.pageSize;
+    }
+
+    let all: any[] = Array.from(mockUsers.values());
+
+    // 1. Search Filter (displayName, email, user ID)
+    if (params.search) {
+      const q = params.search.toLowerCase().trim();
+      all = all.filter((u: any) => {
+        const emailMatch = u.email?.toLowerCase().includes(q);
+        const idMatch = u.id?.toLowerCase().includes(q);
+        const nameMatch = (u.display_name || u.displayName || '')?.toLowerCase().includes(q);
+        return emailMatch || idMatch || nameMatch;
+      });
+    }
+
+    // 2. Role Filter
+    if (params.role && params.role !== 'all') {
+      const targetRole = params.role.toUpperCase();
+      all = all.filter((u: any) => (u.role || 'USER').toUpperCase() === targetRole);
+    }
+
+    // 3. Status Filter
+    if (params.status && params.status !== 'all') {
+      const targetStatus = params.status.toLowerCase();
+      all = all.filter((u: any) => (u.status || 'active').toLowerCase() === targetStatus);
+    }
+
+    // 4. Subscription Filter
+    if (params.subscription && params.subscription !== 'all') {
+      const targetTier = params.subscription.toLowerCase();
+      all = all.filter((u: any) => (u.subscriptionTier || 'free').toLowerCase() === targetTier);
+    }
+
+    // 5. Date Range Filter
+    if (params.createdFrom) {
+      const fromTime = new Date(params.createdFrom).getTime();
+      all = all.filter((u: any) => new Date(u.created_at || u.createdAt || 0).getTime() >= fromTime);
+    }
+    if (params.createdTo) {
+      const toTime = new Date(params.createdTo).getTime();
+      all = all.filter((u: any) => new Date(u.created_at || u.createdAt || 0).getTime() <= toTime);
+    }
+
+    // 6. Sorting
+    const sortBy = params.sortBy || 'createdAt';
+    const sortOrder = params.sortOrder === 'asc' ? 1 : -1;
+
+    all.sort((a: any, b: any) => {
+      if (sortBy === 'name' || sortBy === 'displayName') {
+        const nameA = (a.display_name || a.displayName || a.email || '').toLowerCase();
+        const nameB = (b.display_name || b.displayName || b.email || '').toLowerCase();
+        return nameA.localeCompare(nameB) * sortOrder;
+      }
+      if (sortBy === 'lastActive' || sortBy === 'lastLoginAt') {
+        const timeA = new Date(a.lastLoginAt || (a as any).last_login_at || a.updated_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.lastLoginAt || (b as any).last_login_at || b.updated_at || b.created_at || 0).getTime();
+        return (timeA - timeB) * sortOrder;
+      }
+      // default: created / createdAt
+      const timeA = new Date(a.created_at || a.createdAt || 0).getTime();
+      const timeB = new Date(b.created_at || b.createdAt || 0).getTime();
+      return (timeA - timeB) * sortOrder;
     });
 
-    return { users: paginated, total };
+    const total = all.length;
+    const paginated = all.slice(offset, offset + limit).map((u: any) => this.toAdminUserView(u));
+    const page = Math.floor(offset / limit) + 1;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      users: paginated,
+      total,
+      page,
+      pageSize: limit,
+      totalPages,
+    };
+  }
+
+  /**
+   * Get rich user detail inspection profile
+   */
+  async getUserDetails(userId: string): Promise<AdminUserDetailView> {
+    const user: any = mockUsers.get(userId);
+    if (!user) {
+      throw new NotFoundError(`User not found: ${userId}`);
+    }
+
+    const profileExtended = authService.getUserProfileExtended(userId);
+    const sessions = authService.getUserSessions(userId);
+
+    const userProjects = Array.from(mockProjects.values())
+      .filter((p: any) => p.userId === userId)
+      .map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        ownerId: p.userId,
+        status: p.status,
+        version: p.version || 1,
+        durationSeconds: p.timeline?.duration || 0,
+        tracksCount: p.timeline?.tracks?.length || 0,
+        createdAt: p.createdAt || p.created_at || new Date().toISOString(),
+        updatedAt: p.updatedAt || p.updated_at || new Date().toISOString(),
+      }));
+
+    const userMedia = Array.from(mockMediaAssets.values())
+      .filter((m: any) => m.userId === userId);
+    const mediaTotalBytes = userMedia.reduce((acc: number, m: any) => acc + (m.fileSizeBytes || 0), 0);
+    const videoCount = userMedia.filter((m: any) => m.mimeType?.startsWith('video')).length;
+    const audioCount = userMedia.filter((m: any) => m.mimeType?.startsWith('audio')).length;
+    const imageCount = userMedia.filter((m: any) => m.mimeType?.startsWith('image')).length;
+
+    const userAiJobs = Array.from(mockAIJobs.values())
+      .filter((j: any) => j.userId === userId)
+      .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    const totalTokens = userAiJobs.reduce(
+      (sum: number, j: any) => sum + (j.inputTokens || 0) + (j.outputTokens || 0),
+      0
+    );
+    const estimatedCostUsd = userAiJobs.reduce((sum: number, j: any) => sum + (j.cost || 0), 0);
+
+    const balance = mockCreditBalances.get(userId) ?? 100;
+    const transactions = mockCreditLedger.filter((l: any) => l.userId === userId);
+
+    const auditActivity = mockAuditLogs
+      .filter((l: any) => l.targetId === userId || l.actorId === userId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    const tier = user.subscriptionTier || 'free';
+    const plan = (BILLING_PLANS as any)[tier] || { name: 'Free Starter Plan', monthlyCredits: 100, priceUsd: 0 };
+
+    return {
+      profile: {
+        id: user.id,
+        displayName: profileExtended?.displayName || user.display_name || user.email.split('@')[0],
+        email: user.email,
+        avatarUrl: profileExtended?.avatarUrl || user.avatar_url || null,
+        role: (user.role || 'USER').toUpperCase(),
+        status: user.status || 'active',
+        emailVerified: profileExtended ? profileExtended.emailVerified : false,
+        createdAt: user.created_at || user.createdAt || new Date().toISOString(),
+        updatedAt: user.updated_at || user.updatedAt || new Date().toISOString(),
+        lastLoginAt: user.lastLoginAt || (user as any).last_login_at || profileExtended?.lastLoginAt,
+        bio: profileExtended?.bio || null,
+        timezone: profileExtended?.timezone || 'UTC',
+        locale: profileExtended?.locale || 'en-US',
+        preferences: profileExtended?.preferences || { theme: 'dark' },
+      },
+      sessions,
+      projects: userProjects,
+      mediaUsage: {
+        totalFiles: userMedia.length,
+        totalBytes: mediaTotalBytes,
+        videoCount,
+        audioCount,
+        imageCount,
+        files: userMedia.map((m: any) => ({
+          id: m.id,
+          userId: m.userId,
+          name: m.name,
+          mimeType: m.mimeType,
+          fileSizeBytes: m.fileSizeBytes || 0,
+          durationSeconds: m.durationSeconds,
+          width: m.width,
+          height: m.height,
+          status: m.status || 'ready',
+          hasWaveform: Boolean(m.waveformUrl || m.peaks),
+          hasThumbnail: Boolean(m.thumbnailUrl),
+          createdAt: m.createdAt || new Date().toISOString(),
+        })),
+      },
+      aiUsage: {
+        totalJobs: userAiJobs.length,
+        totalTokens,
+        estimatedCostUsd,
+        recentJobs: userAiJobs.slice(0, 10).map((j: any) => ({
+          id: j.id,
+          type: j.type,
+          provider: j.provider || 'gemini',
+          model: j.model || 'gemini-1.5-pro',
+          status: j.status,
+          tokens: (j.inputTokens || 0) + (j.outputTokens || 0),
+          cost: j.cost || 0,
+          createdAt: j.createdAt,
+        })),
+      },
+      creditTransactions: {
+        balance,
+        transactions,
+      },
+      subscription: {
+        tier,
+        status: user.status === 'suspended' ? 'suspended' : 'active',
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: new Date(Date.now() + 28 * 86400000).toISOString(),
+        priceUsd: plan.priceUsd || 0,
+        interval: 'month',
+      },
+      auditActivity,
+    };
   }
 
   /**
@@ -623,38 +847,150 @@ export class AdminService {
   }
 
   /**
-   * Update a user's role and status
+   * Update a user's role with RBAC and SUPERADMIN-only escalation guards
    */
-  async updateUserRole(userId: string, role: string, status?: string, adminId?: string): Promise<AdminUserView> {
+  async updateUserRole(
+    userId: string,
+    role: string,
+    status?: string,
+    actor?: { userId: string; role: string; email?: string } | string
+  ): Promise<AdminUserView> {
     const user: any = mockUsers.get(userId);
     if (!user) {
       throw new NotFoundError(`User not found: ${userId}`);
     }
 
+    const actorObj = typeof actor === 'string'
+      ? { userId: actor, role: actor === 'admin_api_key' ? 'SUPERADMIN' : 'ADMIN' }
+      : actor || { userId: 'admin_system', role: 'ADMIN' };
+
+    const actorRole = (actorObj.role || '').toUpperCase();
+    const targetCurrentRole = (user.role || '').toUpperCase();
+    const targetNewRole = role.toUpperCase();
+
+    // RBAC Security Guard:
+    // Only a SUPERADMIN can escalate privileges to ADMIN or SUPERADMIN, or modify an existing ADMIN/SUPERADMIN.
+    const isEscalatingToAdmin = targetNewRole === 'ADMIN' || targetNewRole === 'SUPERADMIN';
+    const isModifyingAdmin = targetCurrentRole === 'ADMIN' || targetCurrentRole === 'SUPERADMIN';
+
+    if ((isEscalatingToAdmin || isModifyingAdmin) && actorRole !== 'SUPERADMIN') {
+      throw new ForbiddenError(
+        'Forbidden: Privilege escalation or modifying administrative accounts requires SUPERADMIN credentials'
+      );
+    }
+
     const previousRole = user.role;
-    user.role = role.toUpperCase();
+    user.role = targetNewRole;
     if (status) {
       user.status = status;
     }
     user.updatedAt = new Date().toISOString();
+    user.updated_at = user.updatedAt;
 
-    this.recordAuditLog('USER_ROLE_UPDATED', adminId || 'admin', {
-      userId,
-      previousRole,
-      newRole: user.role,
-      status: user.status,
-    }, userId);
+    this.recordAuditLog(
+      'USER_ROLE_UPDATED',
+      actorObj.userId,
+      {
+        userId,
+        previousRole,
+        newRole: user.role,
+        status: user.status,
+        actorRole,
+      },
+      userId
+    );
 
-    const balance = mockCreditBalances.get(userId) ?? 100;
+    return this.toAdminUserView(user);
+  }
+
+  /**
+   * Update user account status (active, suspended, etc.) with audit logging
+   */
+  async updateUserStatus(
+    userId: string,
+    status: string,
+    actor: { userId: string; role: string; email?: string },
+    reason?: string
+  ): Promise<AdminUserView> {
+    const user: any = mockUsers.get(userId);
+    if (!user) {
+      throw new NotFoundError(`User not found: ${userId}`);
+    }
+
+    const targetRole = (user.role || '').toUpperCase();
+    const actorRole = (actor.role || '').toUpperCase();
+
+    // RBAC Security Guard:
+    // Suspending or disabling an administrative account requires SUPERADMIN privileges.
+    if ((targetRole === 'ADMIN' || targetRole === 'SUPERADMIN') && actorRole !== 'SUPERADMIN') {
+      throw new ForbiddenError('Forbidden: Modifying the status of an administrative account requires SUPERADMIN credentials');
+    }
+
+    const previousStatus = user.status || 'active';
+    user.status = status.toLowerCase();
+    user.updatedAt = new Date().toISOString();
+    user.updated_at = user.updatedAt;
+
+    this.recordAuditLog(
+      'USER_STATUS_UPDATED',
+      actor.userId,
+      {
+        userId,
+        targetEmail: user.email,
+        previousStatus,
+        newStatus: user.status,
+        reason: reason || 'Administrative status change',
+        actorRole,
+      },
+      userId
+    );
+
+    return this.toAdminUserView(user);
+  }
+
+  /**
+   * Revoke active user sessions with audit trail
+   */
+  async revokeUserSessions(
+    userId: string,
+    actor: { userId: string; role: string; email?: string },
+    sessionId?: string
+  ): Promise<{ revokedCount: number; message: string }> {
+    const user: any = mockUsers.get(userId);
+    if (!user) {
+      throw new NotFoundError(`User not found: ${userId}`);
+    }
+
+    const targetRole = (user.role || '').toUpperCase();
+    const actorRole = (actor.role || '').toUpperCase();
+
+    if ((targetRole === 'ADMIN' || targetRole === 'SUPERADMIN') && actorRole !== 'SUPERADMIN') {
+      throw new ForbiddenError('Forbidden: Revoking sessions of an administrative account requires SUPERADMIN credentials');
+    }
+
+    let count = 0;
+    if (sessionId) {
+      const ok = authService.revokeSingleSession(sessionId, userId);
+      count = ok ? 1 : 0;
+    } else {
+      count = authService.revokeUserSessions(userId);
+    }
+
+    this.recordAuditLog(
+      'USER_SESSIONS_REVOKED',
+      actor.userId,
+      {
+        userId,
+        targetEmail: user.email,
+        sessionId: sessionId || 'ALL',
+        revokedCount: count,
+      },
+      userId
+    );
+
     return {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      status: user.status || 'active',
-      creditBalance: balance,
-      subscriptionTier: user.subscriptionTier || 'free',
-      createdAt: user.createdAt || new Date().toISOString(),
-      lastLoginAt: user.lastLoginAt,
+      revokedCount: count,
+      message: sessionId ? `Revoked session ${sessionId}` : `Revoked ${count} active sessions for ${user.email}`,
     };
   }
 

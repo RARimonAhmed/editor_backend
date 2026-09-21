@@ -3,6 +3,8 @@ import {
   AdminChartsReport,
   AdminSystemHealthReport,
   AdminUserView,
+  AdminUserDetailView,
+  PaginatedUsersResponse,
   AdminProjectView,
   AdminMediaView,
   AdminCommentView,
@@ -125,16 +127,73 @@ class AdminApiClient {
   }
 
   // Users
-  async getUsers(query?: string): Promise<AdminUserView[]> {
-    const qs = query ? `?search=${encodeURIComponent(query)}` : '';
+  async getUsers(options?: string | {
+    search?: string;
+    role?: string;
+    status?: string;
+    subscription?: string;
+    createdFrom?: string;
+    createdTo?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    page?: number;
+    pageSize?: number;
+  }): Promise<PaginatedUsersResponse> {
+    let qs = '';
+    if (typeof options === 'string') {
+      qs = options ? `?search=${encodeURIComponent(options)}` : '';
+    } else if (options) {
+      const params = new URLSearchParams();
+      if (options.search) params.set('search', options.search);
+      if (options.role && options.role !== 'all') params.set('role', options.role);
+      if (options.status && options.status !== 'all') params.set('status', options.status);
+      if (options.subscription && options.subscription !== 'all') params.set('subscription', options.subscription);
+      if (options.createdFrom) params.set('createdFrom', options.createdFrom);
+      if (options.createdTo) params.set('createdTo', options.createdTo);
+      if (options.sortBy) params.set('sortBy', options.sortBy);
+      if (options.sortOrder) params.set('sortOrder', options.sortOrder);
+      if (options.page) params.set('page', String(options.page));
+      if (options.pageSize) params.set('pageSize', String(options.pageSize));
+      const str = params.toString();
+      if (str) qs = `?${str}`;
+    }
+
     const res = await this.request<any>(`/admin/users${qs}`);
-    return Array.isArray(res) ? res : (res.users || []);
+    if (res && Array.isArray(res.users)) {
+      return res;
+    }
+    const userArray = Array.isArray(res) ? res : [];
+    return {
+      users: userArray,
+      total: userArray.length,
+      page: 1,
+      pageSize: userArray.length,
+      totalPages: 1,
+    };
+  }
+
+  async getUserDetails(userId: string): Promise<AdminUserDetailView> {
+    return this.request<AdminUserDetailView>(`/admin/users/${userId}`);
   }
 
   async updateUserRole(userId: string, role: string, status?: string): Promise<AdminUserView> {
     return this.request<AdminUserView>(`/admin/users/${userId}/role`, {
       method: 'PATCH',
       body: JSON.stringify({ role, status }),
+    });
+  }
+
+  async updateUserStatus(userId: string, status: string, reason?: string): Promise<AdminUserView> {
+    return this.request<AdminUserView>(`/admin/users/${userId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, reason }),
+    });
+  }
+
+  async revokeUserSessions(userId: string, sessionId?: string): Promise<{ revokedCount: number; message: string }> {
+    return this.request<{ revokedCount: number; message: string }>(`/admin/users/${userId}/revoke-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
     });
   }
 

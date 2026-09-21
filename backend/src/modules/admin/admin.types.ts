@@ -1,12 +1,91 @@
 export interface AdminUserView {
   id: string;
+  displayName: string;
   email: string;
   role: string;
   status: string;
   creditBalance: number;
   subscriptionTier: string;
+  projectsCount: number;
   createdAt: string;
+  updatedAt?: string;
   lastLoginAt?: string;
+  avatarUrl?: string | null;
+}
+
+export interface AdminUserSessionView {
+  id: string;
+  deviceId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  isRevoked: boolean;
+  isActive: boolean;
+}
+
+export interface AdminUserDetailView {
+  profile: {
+    id: string;
+    displayName: string;
+    email: string;
+    avatarUrl: string | null;
+    role: string;
+    status: string;
+    emailVerified: boolean;
+    createdAt: string;
+    updatedAt: string;
+    lastLoginAt?: string;
+    bio?: string | null;
+    timezone?: string;
+    locale?: string;
+    preferences?: Record<string, any>;
+  };
+  sessions: AdminUserSessionView[];
+  projects: AdminProjectView[];
+  mediaUsage: {
+    totalFiles: number;
+    totalBytes: number;
+    videoCount: number;
+    audioCount: number;
+    imageCount: number;
+    files: AdminMediaView[];
+  };
+  aiUsage: {
+    totalJobs: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    recentJobs: any[];
+  };
+  creditTransactions: {
+    balance: number;
+    transactions: any[];
+  };
+  subscription: {
+    tier: string;
+    status: string;
+    cancelAtPeriodEnd: boolean;
+    currentPeriodEnd?: string;
+    priceUsd?: number;
+    interval?: string;
+  };
+  auditActivity: AdminAuditLogEntry[];
+}
+
+export interface AdminUsersQueryParams {
+  search?: string;
+  role?: string;
+  status?: string;
+  subscription?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  sortBy?: 'created' | 'createdAt' | 'lastActive' | 'lastLoginAt' | 'name' | 'displayName';
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  offset?: number;
 }
 
 export interface AdminProjectView {

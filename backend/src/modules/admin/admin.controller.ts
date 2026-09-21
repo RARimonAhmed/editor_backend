@@ -6,12 +6,32 @@ import { AuthenticationError, ForbiddenError } from '../../core/errors.js';
 
 export class AdminController {
   async listUsers(request: FastifyRequest, reply: FastifyReply) {
-    const query = request.query as { limit?: string; offset?: string; search?: string };
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
-    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+    const query = (request.query || {}) as Record<string, string>;
+    const limit = query.pageSize ? parseInt(query.pageSize, 10) : query.limit ? parseInt(query.limit, 10) : 50;
+    const page = query.page ? parseInt(query.page, 10) : undefined;
+    const offset = query.offset ? parseInt(query.offset, 10) : undefined;
 
-    const result = await adminService.listUsers(limit, offset, query.search);
+    const result = await adminService.listUsers({
+      search: query.search,
+      role: query.role,
+      status: query.status,
+      subscription: query.subscription,
+      createdFrom: query.createdFrom,
+      createdTo: query.createdTo,
+      sortBy: query.sortBy as any,
+      sortOrder: query.sortOrder as any,
+      limit,
+      pageSize: limit,
+      page,
+      offset,
+    });
     return reply.status(200).send(createSuccessResponse(result));
+  }
+
+  async getUserDetails(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const details = await adminService.getUserDetails(id);
+    return reply.status(200).send(createSuccessResponse(details));
   }
 
   async listProjects(request: FastifyRequest, reply: FastifyReply) {
@@ -118,10 +138,28 @@ export class AdminController {
   async updateUserRole(request: FastifyRequest, reply: FastifyReply) {
     const { id } = request.params as { id: string };
     const body = request.body as { role: string; status?: string };
-    const actorId = (request as any).user?.userId || 'admin_system';
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
 
-    const updated = await adminService.updateUserRole(id, body.role, body.status, actorId);
+    const updated = await adminService.updateUserRole(id, body.role, body.status, actor);
     return reply.status(200).send(createSuccessResponse(updated));
+  }
+
+  async updateUserStatus(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const body = request.body as { status: string; reason?: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+
+    const updated = await adminService.updateUserStatus(id, body.status, actor, body.reason);
+    return reply.status(200).send(createSuccessResponse(updated));
+  }
+
+  async revokeUserSessions(request: FastifyRequest, reply: FastifyReply) {
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as { sessionId?: string };
+    const actor = (request as any).user || { userId: 'admin_system', role: 'ADMIN' };
+
+    const result = await adminService.revokeUserSessions(id, actor, body.sessionId);
+    return reply.status(200).send(createSuccessResponse(result));
   }
 
   async grantCredits(request: FastifyRequest, reply: FastifyReply) {
