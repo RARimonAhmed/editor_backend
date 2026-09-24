@@ -1,0 +1,30 @@
+[
+  {
+    "id": "free",
+    "name": "Free",
+    "priceCents": 0,
+    "creditsPerPeriod": 1000,
+    "features": []
+  },
+  {
+    "id": "basic",
+    "name": "Basic",
+    "priceCents": 999,
+    "creditsPerPeriod": 5000,
+    "features": ["HD Export", "Basic Support"]
+  },
+  {
+    "id": "pro",
+    "name": "Pro",
+    "priceCents": 1999,
+    "creditsPerPeriod": 15000,
+    "features": ["4K Export", "Priority Support", "AI Assist"]
+  },
+  {
+    "id": "business",
+    "name": "Business",
+    "priceCents": 4999,
+    "creditsPerPeriod": 50000,
+    "features": ["Unlimited Export", "Enterprise Support", "Dedicated Account Manager"]
+  }
+]

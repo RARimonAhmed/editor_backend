@@ -603,11 +603,155 @@ paths:
           description: Comment resolved
 
   # ============================================================================
-  # MEDIA & INTELLIGENCE
+  # PRODUCTION MEDIA ASSET LIBRARY & FOLDERS
   # ============================================================================
+  /v1/media:
+    get:
+      summary: List user media assets with multi-criteria filtering
+      description: Retrieve cataloged media assets with filtering by folder, category, status, favorite, query, and sorting.
+      operationId: listMediaAssets
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: folderId
+          in: query
+          description: Filter by folder ID (or 'root' for unorganized assets)
+          schema: { type: string }
+        - name: favorite
+          in: query
+          description: Filter by favorite status
+          schema: { type: boolean }
+        - name: recent
+          in: query
+          description: Filter assets uploaded in the last N days (default 7 if true)
+          schema: { type: boolean }
+        - name: category
+          in: query
+          description: Media category
+          schema: { type: string, enum: [video, audio, image, font, lut, sticker, template] }
+        - name: type
+          in: query
+          description: Alias for category
+          schema: { type: string }
+        - name: status
+          in: query
+          description: Asset lifecycle status ('all' returns non-deleted assets)
+          schema: { type: string, enum: [UPLOADING, UPLOADED, PROCESSING, READY, FAILED, DELETING, DELETED, ARCHIVED, all], default: READY }
+        - name: q
+          in: query
+          description: Case-insensitive search query on asset name and original filename
+          schema: { type: string }
+        - name: search
+          in: query
+          description: Alias for search query q
+          schema: { type: string }
+        - name: sortBy
+          in: query
+          description: Attribute to sort assets by
+          schema: { type: string, enum: [createdAt, updatedAt, name, sizeBytes, durationSeconds], default: createdAt }
+        - name: sortOrder
+          in: query
+          description: Sort direction
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: limit
+          in: query
+          description: Maximum number of assets to return
+          schema: { type: integer, default: 50 }
+        - name: offset
+          in: query
+          description: Pagination offset index
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Paginated media assets list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MediaAsset'
+                  meta:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      limit: { type: integer }
+                      offset: { type: integer }
+                      page: { type: integer }
+                      pages: { type: integer }
+
+    post:
+      summary: Direct upload for small media assets (< 10 MB)
+      description: Upload raw base64 or binary data directly without presigned URL exchange.
+      operationId: directUploadMedia
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, mimeType, fileData]
+              properties:
+                fileName: { type: string }
+                mimeType: { type: string }
+                fileData: { type: string, description: "Base64 encoded file payload" }
+                folderId: { type: string }
+                category: { type: string, enum: [video, audio, image, font, lut, sticker, template] }
+      responses:
+        '201':
+          description: Asset created and stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  /v1/media/register:
+    post:
+      summary: Register pre-existing / local media asset
+      description: Register a media asset record with client-provided technical telemetry, skipping remote transcoding if already suitable.
+      operationId: registerMedia
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, mimeType, fileSizeBytes]
+              properties:
+                fileName: { type: string }
+                mimeType: { type: string }
+                fileSizeBytes: { type: integer }
+                category: { type: string, enum: [video, audio, image, font, lut, sticker, template] }
+                folderId: { type: string }
+                checksumSha256: { type: string, description: "64 hex SHA-256 hash" }
+                durationSeconds: { type: number }
+                width: { type: integer }
+                height: { type: integer }
+                framerate: { type: number }
+                codec: { type: string }
+                bitrateKbps: { type: integer }
+                audioChannels: { type: integer }
+                audioSampleRate: { type: integer }
+                rotation: { type: integer }
+      responses:
+        '201':
+          description: Media asset registered with READY status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
   /v1/media/presign:
     post:
-      summary: Request presigned direct upload URL
+      summary: Request presigned upload URL (Direct or Multipart)
+      description: Initiates upload session with SHA-256 deduplication checking, path traversal validation, and size quotas.
       operationId: presignMediaUpload
       security:
         - BearerAuth: []
@@ -622,13 +766,43 @@ paths:
                 fileName: { type: string }
                 fileSizeBytes: { type: integer }
                 mimeType: { type: string }
+                category: { type: string, enum: [video, audio, image, font, lut, sticker, template] }
+                folderId: { type: string }
+                projectId: { type: string }
+                checksumSha256: { type: string, description: "64 hex SHA-256 for integrity & deduplication" }
+                uploadType: { type: string, enum: [auto, direct, multipart], default: auto }
+                partCount: { type: integer, description: "Required for multipart uploads" }
       responses:
         '200':
-          description: Presigned upload URL with uploadId and asset record
+          description: Presigned upload URL or deduplication reference
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      mediaId: { type: string }
+                      fileKey: { type: string }
+                      uploadType: { type: string, enum: [direct, multipart] }
+                      url: { type: string, description: "Presigned URL for direct upload" }
+                      uploadId: { type: string, description: "Multipart upload ID" }
+                      parts:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            partNumber: { type: integer }
+                            url: { type: string }
+                      expiresInSeconds: { type: integer }
+                      isDuplicate: { type: boolean, description: "True if SHA-256 match avoided duplicate upload" }
 
   /v1/media/complete:
     post:
-      summary: Finalize upload and dispatch async processing job
+      summary: Finalize upload, verify magic bytes, and dispatch processing job
+      description: Validates binary container magic bytes, verifies SHA-256 integrity, transitions status to PROCESSING, and dispatches FFprobe/thumbnail/waveform/proxy pipeline.
       operationId: completeMediaUpload
       security:
         - BearerAuth: []
@@ -638,13 +812,379 @@ paths:
           application/json:
             schema:
               type: object
-              required: [mediaId, uploadId]
+              required: [mediaId]
               properties:
-                mediaId: { type: string, format: uuid }
+                mediaId: { type: string }
                 uploadId: { type: string }
+                parts:
+                  type: array
+                  items:
+                    type: object
+                    required: [partNumber, eTag]
+                    properties:
+                      partNumber: { type: integer }
+                      eTag: { type: string }
+                checksumSha256: { type: string }
+                durationSeconds: { type: number }
+                width: { type: integer }
+                height: { type: integer }
       responses:
         '200':
-          description: Enqueued media processing pipeline
+          description: Upload confirmed; processing dispatched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  /v1/media/{id}:
+    get:
+      summary: Retrieve media asset by ID
+      description: Returns full asset entity including variants (original, thumbnail, waveform, proxy), technical telemetry, and active presigned download URL.
+      operationId: getMediaById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Media asset details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+        '404':
+          description: Asset not found or deleted
+
+    delete:
+      summary: Delete media asset (Soft or Permanent)
+      description: By default soft-deletes asset (marking status DELETED). Pass permanent=true to purge physical files from S3/MinIO.
+      operationId: deleteMedia
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: permanent
+          in: query
+          description: Purge physical storage binaries immediately
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Media asset deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [DELETED] }
+                      permanent: { type: boolean }
+
+  /v1/media/{id}/rename:
+    patch:
+      summary: Rename media asset
+      operationId: renameMedia
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '200':
+          description: Media asset renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  /v1/media/{id}/move:
+    patch:
+      summary: Move media asset to folder or root
+      operationId: moveMedia
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                folderId: { type: string, nullable: true, description: "Target folder ID, or null for root" }
+      responses:
+        '200':
+          description: Media asset moved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  /v1/media/{id}/favorite:
+    post:
+      summary: Set media asset favorite status
+      operationId: setMediaFavorite
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isFavorite: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Favorite status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+    patch:
+      summary: Update media asset favorite status (alias)
+      operationId: patchMediaFavorite
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isFavorite: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Favorite status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  /v1/media/{id}/archive:
+    post:
+      summary: Archive media asset
+      description: Sets media asset status to ARCHIVED, hiding it from default active bin views while preserving storage.
+      operationId: archiveMedia
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Media asset archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  /v1/media/{id}/restore:
+    post:
+      summary: Restore archived media asset
+      description: Transitions ARCHIVED media asset back to READY status.
+      operationId: restoreMedia
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Media asset restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaAsset'
+
+  # ============================================================================
+  # MEDIA FOLDERS HIERARCHY
+  # ============================================================================
+  /v1/media/folders:
+    get:
+      summary: List media folders
+      description: Returns organized folders for the authenticated user, optionally scoped by parentId.
+      operationId: listMediaFolders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: parentId
+          in: query
+          description: Filter folders by parent folder ID (or 'root' for top-level folders)
+          schema: { type: string }
+      responses:
+        '200':
+          description: Folders list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MediaFolder'
+
+    post:
+      summary: Create media folder
+      operationId: createMediaFolder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                parentId: { type: string, nullable: true }
+                color: { type: string, example: "#10B981" }
+      responses:
+        '201':
+          description: Media folder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaFolder'
+
+  /v1/media/folders/{id}:
+    get:
+      summary: Get media folder by ID
+      operationId: getMediaFolderById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Media folder details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaFolder'
+
+    patch:
+      summary: Rename media folder or update color
+      operationId: renameMediaFolder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                color: { type: string }
+      responses:
+        '200':
+          description: Media folder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaFolder'
+
+    delete:
+      summary: Delete media folder
+      description: Deletes the folder and safely unlinks contained media assets and child folders back to root.
+      operationId: deleteMediaFolder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Folder deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      deleted: { type: boolean }
+
+  /v1/media/folders/{id}/move:
+    patch:
+      summary: Move media folder to new parent or root
+      operationId: moveMediaFolder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parentId: { type: string, nullable: true, description: "New parent folder ID, or null for root" }
+      responses:
+        '200':
+          description: Media folder moved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaFolder'
 
   /v1/media/search:
     post:
@@ -1103,6 +1643,25 @@ paths:
         '200':
           description: Immutable security and audit events
 
+  /v1/admin/media/summary:
+    get:
+      summary: Media storage and processing operational summary
+      description: Returns media assets counts, storage usage in bytes, processing failure metrics, top largest assets, and recent uploads.
+      operationId: adminGetMediaSummary
+      security:
+        - AdminAuth: []
+      responses:
+        '200':
+          description: Media library operational telemetry summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    $ref: '#/components/schemas/AdminMediaSummary'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1115,6 +1674,133 @@ components:
       name: x-admin-key
 
   schemas:
+    MediaAsset:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        projectId: { type: string, nullable: true }
+        folderId: { type: string, nullable: true }
+        name: { type: string }
+        originalFilename: { type: string }
+        category: { type: string, enum: [video, audio, image, font, lut, sticker, template] }
+        fileKey: { type: string }
+        mimeType: { type: string }
+        fileSizeBytes: { type: integer }
+        checksumSha256: { type: string }
+        durationSeconds: { type: number }
+        width: { type: integer }
+        height: { type: integer }
+        framerate: { type: number }
+        codec: { type: string }
+        bitrateKbps: { type: integer }
+        audioChannels: { type: integer }
+        audioSampleRate: { type: integer }
+        rotation: { type: integer }
+        orientation: { type: string, enum: [landscape, portrait, square] }
+        status: { type: string, enum: [UPLOADING, UPLOADED, PROCESSING, READY, FAILED, DELETING, DELETED, ARCHIVED] }
+        isFavorite: { type: boolean }
+        downloadUrl: { type: string, format: uri }
+        thumbnailUrl: { type: string, format: uri }
+        variants:
+          $ref: '#/components/schemas/MediaVariants'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    MediaVariants:
+      type: object
+      properties:
+        original:
+          type: object
+          properties:
+            fileKey: { type: string }
+            url: { type: string }
+            sizeBytes: { type: integer }
+            mimeType: { type: string }
+        thumbnail:
+          type: object
+          properties:
+            fileKey: { type: string }
+            url: { type: string }
+            width: { type: integer }
+            height: { type: integer }
+        waveform:
+          type: object
+          properties:
+            fileKey: { type: string }
+            url: { type: string }
+            peaks:
+              type: array
+              items: { type: number }
+            channels: { type: integer }
+            samplesPerPixel: { type: integer }
+        proxy:
+          type: object
+          properties:
+            fileKey: { type: string }
+            url: { type: string }
+            resolution: { type: string }
+            codec: { type: string }
+            sizeBytes: { type: integer }
+        previewDerivative:
+          type: object
+          properties:
+            fileKey: { type: string }
+            url: { type: string }
+            resolution: { type: string }
+            durationSeconds: { type: number }
+
+    MediaFolder:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        name: { type: string }
+        parentId: { type: string, nullable: true }
+        color: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AdminMediaSummary:
+      type: object
+      properties:
+        mediaCount: { type: integer }
+        storageUsageBytes: { type: integer }
+        processingFailures:
+          type: object
+          properties:
+            count: { type: integer }
+            recentErrors:
+              type: array
+              items:
+                type: object
+                properties:
+                  mediaId: { type: string }
+                  name: { type: string }
+                  reason: { type: string }
+                  updatedAt: { type: string }
+        largestAssets:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              category: { type: string }
+              sizeBytes: { type: integer }
+              createdAt: { type: string }
+        recentUploads:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              category: { type: string }
+              status: { type: string }
+              sizeBytes: { type: integer }
+              createdAt: { type: string }
+
     AuthResponse:
       type: object
       properties:

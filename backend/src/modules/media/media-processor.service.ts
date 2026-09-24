@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { db } from '../../database/client.js';
 import { storageService } from '../../services/storage/index.js';
 import { jobQueue, Job } from '../../services/queue/index.js';
@@ -361,6 +362,16 @@ export class MediaProcessorService {
       }
     }
 
+    let computedChecksum = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    if (scratchFilePath) {
+      try {
+        const fileBytes = await fs.promises.readFile(scratchFilePath);
+        computedChecksum = crypto.createHash('sha256').update(fileBytes).digest('hex');
+      } catch {
+        // keep fallback
+      }
+    }
+
     // Fallback for tests/environments without uploaded physical bytes
     const isVideo = category === 'video' || mimeType.startsWith('video/');
     const isAudio = category === 'audio' || mimeType.startsWith('audio/');
@@ -386,7 +397,7 @@ export class MediaProcessorService {
         rotation: 0,
         bitrateKbps: bitrate,
         fileSizeBytes,
-        checksumSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        checksumSha256: computedChecksum,
         colorInformation: {
           colorSpace: 'bt709',
           colorPrimaries: 'bt709',
@@ -415,7 +426,7 @@ export class MediaProcessorService {
         rotation: 0,
         bitrateKbps: bitrate,
         fileSizeBytes,
-        checksumSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        checksumSha256: computedChecksum,
         rawExif: { audioBitrate: `${bitrate}k` },
       };
     }
@@ -432,7 +443,7 @@ export class MediaProcessorService {
         rotation: 0,
         bitrateKbps: 0,
         fileSizeBytes,
-        checksumSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        checksumSha256: computedChecksum,
         colorInformation: {
           colorSpace: 'srgb',
           bitDepth: 8,
@@ -449,7 +460,7 @@ export class MediaProcessorService {
       rotation: 0,
       bitrateKbps: 0,
       fileSizeBytes,
-      checksumSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      checksumSha256: computedChecksum,
     };
   }
 
@@ -465,7 +476,7 @@ export class MediaProcessorService {
       asset.framerate = telemetry.fps;
       asset.audioChannels = telemetry.channels;
       asset.audioSampleRate = telemetry.sampleRate;
-      asset.checksumSha256 = telemetry.checksumSha256 || asset.checksumSha256;
+      asset.checksumSha256 = asset.checksumSha256 || telemetry.checksumSha256;
       asset.metadata = {
         duration: telemetry.duration,
         width: telemetry.resolution.width,
@@ -869,11 +880,64 @@ export class MediaProcessorService {
       asset.width = result.telemetry.resolution.width;
       asset.height = result.telemetry.resolution.height;
       asset.framerate = result.telemetry.fps;
+      asset.codec = result.telemetry.codec;
+      asset.bitrateKbps = result.telemetry.bitrateKbps;
+      asset.audioCodec = result.telemetry.audioCodec;
+      asset.audioChannels = result.telemetry.channels;
+      asset.audioSampleRate = result.telemetry.sampleRate;
+      asset.rotation = result.telemetry.rotation;
+      asset.checksumSha256 = asset.checksumSha256 || result.telemetry.checksumSha256;
+      asset.orientation =
+        result.telemetry.resolution.width > result.telemetry.resolution.height
+          ? 'landscape'
+          : result.telemetry.resolution.height > result.telemetry.resolution.width
+          ? 'portrait'
+          : 'square';
       asset.thumbnailUrl = result.thumbnails?.primaryThumbnailUrl;
       asset.thumbnailStrip = result.thumbnails?.strip;
       asset.waveform = result.waveform;
       asset.proxy = result.proxy;
       asset.searchMetadata = result.searchIndex;
+      asset.variants = {
+        original: {
+          fileKey: asset.fileKey,
+          url: asset.downloadUrl,
+          sizeBytes: asset.fileSizeBytes,
+          mimeType: asset.mimeType,
+        },
+        thumbnail: result.thumbnails
+          ? {
+              fileKey: result.thumbnails.primaryStorageKey,
+              url: result.thumbnails.primaryThumbnailUrl,
+              width: result.thumbnails.width,
+              height: result.thumbnails.height,
+            }
+          : undefined,
+        waveform: result.waveform
+          ? {
+              fileKey: result.waveform.storageKey,
+              url: result.waveform.waveformUrl,
+              peaks: result.waveform.peaks,
+              channels: result.waveform.channels,
+              samplesPerPixel: result.waveform.samplesPerPixel,
+            }
+          : undefined,
+        proxy: result.proxy
+          ? {
+              fileKey: result.proxy.storageKey,
+              url: result.proxy.proxyUrl,
+              resolution: result.proxy.resolution,
+              codec: result.proxy.codec,
+              sizeBytes: result.proxy.fileSizeBytes,
+            }
+          : undefined,
+        previewDerivative: {
+          fileKey: asset.fileKey,
+          url: asset.downloadUrl,
+          resolution: `${result.telemetry.resolution.width}x${result.telemetry.resolution.height}`,
+          durationSeconds: result.telemetry.duration,
+        },
+      };
       asset.updatedAt = result.completedAt;
     }
 

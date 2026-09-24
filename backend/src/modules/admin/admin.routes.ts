@@ -58,6 +58,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     protectedAdmin.post('/projects/:id/snapshots', adminController.createProjectSnapshot.bind(adminController));
 
     protectedAdmin.get('/media', adminController.listMedia.bind(adminController));
+    protectedAdmin.get('/media/summary', adminController.getMediaSummary.bind(adminController));
     protectedAdmin.get('/media/:id', adminController.getMediaDetails.bind(adminController));
     protectedAdmin.post('/media/:id/retry', adminController.retryMediaProcessing.bind(adminController));
     protectedAdmin.post('/media/:id/archive', adminController.archiveMedia.bind(adminController));

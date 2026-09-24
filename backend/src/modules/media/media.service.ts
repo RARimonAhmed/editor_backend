@@ -10,9 +10,18 @@ import { NotFoundError, ForbiddenError, ValidationError } from '../../core/error
 import {
   MediaCategory,
   MediaLifecycleStatus,
+  MediaOrientation,
+  MediaVariants,
   PresignUploadInput,
   CompleteUploadInput,
+  RegisterMediaInput,
   DirectUploadInput,
+  RenameMediaInput,
+  MoveMediaInput,
+  FavoriteMediaInput,
+  CreateFolderInput,
+  RenameFolderInput,
+  MoveFolderInput,
   ListMediaQuery,
   RequestUploadUrlInput,
   ConfirmUploadInput,
@@ -22,10 +31,21 @@ import {
 } from './media.schemas.js';
 import { logger } from '../../core/logger.js';
 
+export interface MediaFolder {
+  id: string;
+  userId: string;
+  name: string;
+  parentId?: string | null;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MediaAsset {
   id: string;
   userId: string;
   projectId?: string;
+  folderId?: string | null;
   name: string;
   originalFilename: string;
   category: MediaCategory;
@@ -43,10 +63,14 @@ export interface MediaAsset {
   audioChannels?: number;
   audioSampleRate?: number;
   rotation?: number;
+  orientation?: MediaOrientation;
   checksumSha256?: string;
+  isFavorite?: boolean;
   uploadId?: string;
   uploadType: 'direct' | 'multipart';
   status: MediaLifecycleStatus;
+  variants?: MediaVariants;
+  isDuplicate?: boolean;
   scanResult?: {
     status: 'passed' | 'failed';
     details?: string;
@@ -66,7 +90,38 @@ export interface MediaAsset {
   updatedAt: string;
 }
 
+export const mockMediaFolders = new Map<string, MediaFolder>();
 export const mockMediaAssets = new Map<string, MediaAsset>();
+
+function validateFilenameSecurity(filename: string) {
+  if (!filename || filename.trim().length === 0) {
+    throw new ValidationError('Filename cannot be empty');
+  }
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    throw new ValidationError('Security violation: Path traversal characters are forbidden in filename');
+  }
+  const dangerousExts = [
+    '.exe',
+    '.bat',
+    '.cmd',
+    '.sh',
+    '.bash',
+    '.ps1',
+    '.vbs',
+    '.js',
+    '.py',
+    '.php',
+    '.msi',
+    '.dll',
+    '.scr',
+    '.com',
+    '.bin',
+  ];
+  const ext = path.extname(filename).toLowerCase();
+  if (dangerousExts.includes(ext)) {
+    throw new ValidationError(`Execution security violation: File extension "${ext}" is not permitted (forbidden executable/script format).`);
+  }
+}
 
 export class MediaService {
   // ============================================================================
@@ -101,7 +156,124 @@ export class MediaService {
   }
 
   // ============================================================================
-  // PRESIGN UPLOAD (DIRECT OR MULTIPART)
+  // FOLDER CRUD
+  // ============================================================================
+  async createFolder(userId: string, input: CreateFolderInput): Promise<MediaFolder> {
+    const trimmed = (input.name || '').trim();
+    if (!trimmed) {
+      throw new ValidationError('Folder name cannot be empty');
+    }
+    if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..')) {
+      throw new ValidationError('Folder name contains invalid path characters');
+    }
+
+    if (input.parentId) {
+      const parent = mockMediaFolders.get(input.parentId);
+      if (!parent || parent.userId !== userId) {
+        throw new NotFoundError(`Parent folder not found: ${input.parentId}`);
+      }
+    }
+
+    const folderId = `folder_${uuidv4().replace(/-/g, '').slice(0, 12)}`;
+    const now = new Date().toISOString();
+    const folder: MediaFolder = {
+      id: folderId,
+      userId,
+      name: trimmed,
+      parentId: input.parentId || null,
+      color: input.color || '#3B82F6',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    mockMediaFolders.set(folderId, folder);
+    logger.info({ folderId, name: trimmed, userId }, 'Created media folder');
+    return folder;
+  }
+
+  async listFolders(userId: string): Promise<MediaFolder[]> {
+    return Array.from(mockMediaFolders.values())
+      .filter((f) => f.userId === userId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getFolderById(userId: string, folderId: string): Promise<MediaFolder> {
+    const folder = mockMediaFolders.get(folderId);
+    if (!folder || folder.userId !== userId) {
+      throw new NotFoundError(`Folder not found: ${folderId}`);
+    }
+    return folder;
+  }
+
+  async renameFolder(userId: string, folderId: string, input: RenameFolderInput): Promise<MediaFolder> {
+    const folder = await this.getFolderById(userId, folderId);
+    const trimmed = (input.name || '').trim();
+    if (!trimmed) {
+      throw new ValidationError('Folder name cannot be empty');
+    }
+    if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..')) {
+      throw new ValidationError('Folder name contains invalid characters');
+    }
+
+    folder.name = trimmed;
+    if (input.color) folder.color = input.color;
+    folder.updatedAt = new Date().toISOString();
+    mockMediaFolders.set(folderId, folder);
+    return folder;
+  }
+
+  async moveFolder(userId: string, folderId: string, input: MoveFolderInput): Promise<MediaFolder> {
+    const folder = await this.getFolderById(userId, folderId);
+
+    if (input.parentId === folderId) {
+      throw new ValidationError('Cannot move folder into itself');
+    }
+
+    if (input.parentId) {
+      const parent = await this.getFolderById(userId, input.parentId);
+      let curr = parent;
+      while (curr.parentId) {
+        if (curr.parentId === folderId) {
+          throw new ValidationError('Cannot move folder into one of its subfolders');
+        }
+        const next = mockMediaFolders.get(curr.parentId);
+        if (!next) break;
+        curr = next;
+      }
+    }
+
+    folder.parentId = input.parentId || null;
+    folder.updatedAt = new Date().toISOString();
+    mockMediaFolders.set(folderId, folder);
+    return folder;
+  }
+
+  async deleteFolder(userId: string, folderId: string): Promise<{ deleted: boolean; id: string }> {
+    await this.getFolderById(userId, folderId);
+
+    // Unlink any assets located in this folder to root
+    for (const asset of mockMediaAssets.values()) {
+      if (asset.userId === userId && asset.folderId === folderId) {
+        asset.folderId = null;
+        asset.updatedAt = new Date().toISOString();
+      }
+    }
+
+    // Unlink any child folders to root
+    for (const child of mockMediaFolders.values()) {
+      if (child.userId === userId && child.parentId === folderId) {
+        child.parentId = null;
+        child.updatedAt = new Date().toISOString();
+      }
+    }
+
+    mockMediaFolders.delete(folderId);
+    logger.info({ folderId, userId }, 'Deleted media folder and unlinked children to root');
+    return { deleted: true, id: folderId };
+  }
+
+  // ============================================================================
+  // PRESIGN UPLOAD (DIRECT OR MULTIPART) WITH DEDUPLICATION
   // ============================================================================
   async presign(
     userId: string,
@@ -114,7 +286,10 @@ export class MediaService {
     uploadId?: string;
     parts?: Array<{ partNumber: number; url: string }>;
     expiresInSeconds: number;
+    isDuplicate?: boolean;
+    existingAsset?: MediaAsset;
   }> {
+    validateFilenameSecurity(input.fileName);
     const category = input.category || inferCategoryFromMime(input.mimeType, input.fileName);
 
     // 1. Content Type Validation
@@ -134,12 +309,47 @@ export class MediaService {
       );
     }
 
+    // 2b. Folder validation
+    if (input.folderId) {
+      const folder = mockMediaFolders.get(input.folderId);
+      if (!folder || folder.userId !== userId) {
+        throw new NotFoundError(`Target folder not found: ${input.folderId}`);
+      }
+    }
+
+    // 3. Deduplication Check (Checksum SHA-256)
+    if (input.checksumSha256) {
+      const existing = Array.from(mockMediaAssets.values()).find(
+        (a) =>
+          a.userId === userId &&
+          a.status === 'READY' &&
+          a.checksumSha256?.toLowerCase() === input.checksumSha256!.toLowerCase() &&
+          a.fileSizeBytes === input.fileSizeBytes
+      );
+
+      if (existing) {
+        logger.info(
+          { mediaId: existing.id, checksum: input.checksumSha256 },
+          'Deduplication match: Returning existing READY media asset'
+        );
+        const downloadUrl = await storageService.getDownloadPresignedUrl(existing.fileKey);
+        return {
+          mediaId: existing.id,
+          fileKey: existing.fileKey,
+          uploadType: 'direct',
+          url: downloadUrl,
+          expiresInSeconds: 3600,
+          isDuplicate: true,
+          existingAsset: existing,
+        };
+      }
+    }
+
     const safeName = path.basename(input.fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
     const mediaId = uuidv4();
     const fileKey = `users/${userId}/media/${category}/${mediaId}_${safeName}`;
     const now = new Date().toISOString();
 
-    // 3. Determine direct vs multipart
     const isMultipart =
       input.uploadType === 'multipart' ||
       (input.uploadType === 'auto' && input.fileSizeBytes >= 50 * 1024 * 1024);
@@ -150,15 +360,11 @@ export class MediaService {
     const expiresIn = 3600;
 
     if (isMultipart) {
-      // Initiate multipart upload
       const init = await storageService.initiateMultipartUpload(fileKey, input.mimeType);
       uploadId = init.uploadId;
-
-      // Calculate part count: 10MB per part or requested partCount
-      const partSize = 10 * 1024 * 1024; // 10 MB
+      const partSize = 10 * 1024 * 1024;
       const count = input.partCount || Math.max(1, Math.ceil(input.fileSizeBytes / partSize));
       partsResult = [];
-
       for (let i = 1; i <= count; i++) {
         const partUrl = await storageService.getMultipartPartPresignedUrl(fileKey, uploadId, i, expiresIn);
         partsResult.push({ partNumber: i, url: partUrl });
@@ -173,11 +379,11 @@ export class MediaService {
       singlePresignedUrl = presigned.url;
     }
 
-    // 4. Record initial media entity in UPLOADING state
     const asset: MediaAsset = {
       id: mediaId,
       userId,
       projectId: input.projectId,
+      folderId: input.folderId || null,
       name: input.fileName,
       originalFilename: input.fileName,
       category,
@@ -188,6 +394,7 @@ export class MediaService {
       uploadId,
       uploadType: isMultipart ? 'multipart' : 'direct',
       status: 'UPLOADING',
+      isFavorite: false,
       retentionDays: 90,
       createdAt: now,
       updatedAt: now,
@@ -228,9 +435,9 @@ export class MediaService {
   // DIRECT UPLOAD (SMALL ASSETS: LUTS, FONTS, STICKERS)
   // ============================================================================
   async directUpload(userId: string, input: DirectUploadInput): Promise<MediaAsset> {
+    validateFilenameSecurity(input.fileName);
     const category = input.category || inferCategoryFromMime(input.mimeType, input.fileName);
 
-    // 1. Content Type & Size Validation
     const allowedList = ALLOWED_MIME_TYPES[category];
     if (allowedList && !allowedList.includes(input.mimeType.toLowerCase())) {
       throw new ValidationError(`MIME type "${input.mimeType}" is not allowed for category "${category}".`);
@@ -239,26 +446,34 @@ export class MediaService {
     const buffer = Buffer.from(input.fileBase64, 'base64');
     const maxSize = MEDIA_SIZE_LIMITS[category];
     if (buffer.length > maxSize) {
-      throw new ValidationError(`File exceeds maximum size limit of ${Math.round(maxSize / (1024 * 1024))} MB.`);
+      throw new ValidationError(`File size exceeds category limit.`);
     }
 
-    // 2. Checksum validation
-    const checkResult = mediaValidationService.validateChecksum(buffer, input.checksumSha256);
-    if (!checkResult.valid) {
-      throw new ValidationError(checkResult.reason || 'Checksum SHA-256 verification failed');
-    }
-    const computedChecksum = checkResult.computedSha256;
-
-    // 2b. Magic Bytes binary validation
-    const magicCheck = mediaValidationService.validateMagicBytes(buffer, category, input.mimeType);
-    if (!magicCheck.valid) {
-      throw new ValidationError(`Security scan rejected upload: ${magicCheck.reason}`);
+    if (input.folderId) {
+      const folder = mockMediaFolders.get(input.folderId);
+      if (!folder || folder.userId !== userId) {
+        throw new NotFoundError(`Target folder not found: ${input.folderId}`);
+      }
     }
 
-    // 3. Security Scan
-    const scan = await this.executeSecurityScan(input.fileName, input.mimeType, category, buffer);
+    const checksumSha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    // Deduplication check
+    const existing = Array.from(mockMediaAssets.values()).find(
+      (a) =>
+        a.userId === userId &&
+        a.status === 'READY' &&
+        a.checksumSha256?.toLowerCase() === checksumSha256.toLowerCase() &&
+        a.fileSizeBytes === buffer.length
+    );
+    if (existing) {
+      existing.downloadUrl = await storageService.getDownloadPresignedUrl(existing.fileKey);
+      return { ...existing, isDuplicate: true };
+    }
+
+    const scan = await this.executeSecurityScan('', input.mimeType, category, buffer);
     if (!scan.passed) {
-      throw new ValidationError(`Security scan failed: ${scan.reason}`);
+      throw new ValidationError(`Security scan rejected upload: ${scan.reason}`);
     }
 
     const mediaId = uuidv4();
@@ -266,26 +481,34 @@ export class MediaService {
     const fileKey = `users/${userId}/media/${category}/${mediaId}_${safeName}`;
     const now = new Date().toISOString();
 
-    // 4. Upload directly to Object Storage
-    await storageService.putObject(fileKey, buffer, input.mimeType, computedChecksum);
+    await storageService.putObject(fileKey, buffer, input.mimeType, checksumSha256);
     const downloadUrl = await storageService.getDownloadPresignedUrl(fileKey);
 
     const asset: MediaAsset = {
       id: mediaId,
       userId,
       projectId: input.projectId,
+      folderId: input.folderId || null,
       name: input.fileName,
       originalFilename: input.fileName,
       category,
       fileKey,
       mimeType: input.mimeType,
       fileSizeBytes: buffer.length,
-      checksumSha256: computedChecksum,
+      checksumSha256,
       uploadType: 'direct',
       status: 'READY',
-      scanResult: { status: 'passed', scannedAt: now },
-      retentionDays: 90,
+      isFavorite: false,
+      retentionDays: 365,
       downloadUrl,
+      variants: {
+        original: {
+          fileKey,
+          url: downloadUrl,
+          sizeBytes: buffer.length,
+          mimeType: input.mimeType,
+        },
+      },
       createdAt: now,
       updatedAt: now,
     };
@@ -295,7 +518,113 @@ export class MediaService {
   }
 
   // ============================================================================
-  // COMPLETE UPLOAD
+  // REGISTER PRE-EXISTING / PRE-UPLOADED MEDIA
+  // ============================================================================
+  async registerMedia(userId: string, input: RegisterMediaInput): Promise<MediaAsset> {
+    validateFilenameSecurity(input.fileName);
+    const category = input.category || inferCategoryFromMime(input.mimeType, input.fileName);
+
+    const allowedList = ALLOWED_MIME_TYPES[category];
+    if (allowedList && !allowedList.includes(input.mimeType.toLowerCase())) {
+      throw new ValidationError(
+        `MIME type "${input.mimeType}" is not permitted for category "${category}". Allowed: ${allowedList.join(', ')}`
+      );
+    }
+
+    const maxSize = MEDIA_SIZE_LIMITS[category];
+    if (input.fileSizeBytes > maxSize) {
+      const maxMb = Math.round(maxSize / (1024 * 1024));
+      throw new ValidationError(`File size ${input.fileSizeBytes} bytes exceeds limit of ${maxMb} MB.`);
+    }
+
+    if (input.folderId) {
+      const folder = mockMediaFolders.get(input.folderId);
+      if (!folder || folder.userId !== userId) {
+        throw new NotFoundError(`Target folder not found: ${input.folderId}`);
+      }
+    }
+
+    // Deduplication check
+    if (input.checksumSha256) {
+      const existing = Array.from(mockMediaAssets.values()).find(
+        (a) =>
+          a.userId === userId &&
+          a.status === 'READY' &&
+          a.checksumSha256?.toLowerCase() === input.checksumSha256!.toLowerCase() &&
+          a.fileSizeBytes === input.fileSizeBytes
+      );
+      if (existing) {
+        existing.downloadUrl = await storageService.getDownloadPresignedUrl(existing.fileKey);
+        return {
+          ...existing,
+          isDuplicate: true,
+        };
+      }
+    }
+
+    const mediaId = uuidv4();
+    const safeName = path.basename(input.fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileKey = input.fileKey || `users/${userId}/media/${category}/${mediaId}_${safeName}`;
+    const now = new Date().toISOString();
+
+    const width = input.width;
+    const height = input.height;
+    const orientation: MediaOrientation | undefined =
+      width && height
+        ? width > height
+          ? 'landscape'
+          : height > width
+          ? 'portrait'
+          : 'square'
+        : undefined;
+
+    const downloadUrl = await storageService.getDownloadPresignedUrl(fileKey);
+
+    const asset: MediaAsset = {
+      id: mediaId,
+      userId,
+      projectId: input.projectId,
+      folderId: input.folderId || null,
+      name: input.fileName,
+      originalFilename: input.fileName,
+      category,
+      fileKey,
+      mimeType: input.mimeType,
+      fileSizeBytes: input.fileSizeBytes,
+      durationSeconds: input.durationSeconds,
+      width,
+      height,
+      framerate: input.framerate,
+      codec: input.codec,
+      bitrateKbps: input.bitrateKbps,
+      audioChannels: input.audioChannels,
+      audioSampleRate: input.audioSampleRate,
+      rotation: input.rotation || 0,
+      orientation,
+      checksumSha256: input.checksumSha256,
+      uploadType: 'direct',
+      status: 'READY',
+      isFavorite: false,
+      retentionDays: 365,
+      downloadUrl,
+      variants: {
+        original: {
+          fileKey,
+          url: downloadUrl,
+          sizeBytes: input.fileSizeBytes,
+          mimeType: input.mimeType,
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    mockMediaAssets.set(mediaId, asset);
+    return asset;
+  }
+
+  // ============================================================================
+  // COMPLETE UPLOAD & TRIGGER MEDIA PROCESSING JOB
   // ============================================================================
   async complete(userId: string, input: CompleteUploadInput): Promise<MediaAsset> {
     const asset = mockMediaAssets.get(input.mediaId);
@@ -368,7 +697,7 @@ export class MediaService {
       throw new ValidationError(`Security scan rejected upload: ${scan.reason}`);
     }
 
-    // 4. Set status to PROCESSING & Enqueue Asynchronous Media Processing Pipeline Job
+    // 4. Set status to UPLOADED then PROCESSING & Enqueue Asynchronous Media Processing Pipeline Job
     asset.status = 'PROCESSING';
     asset.updatedAt = now;
     asset.scanResult = { status: 'passed', scannedAt: now };
@@ -379,7 +708,6 @@ export class MediaService {
 
     asset.downloadUrl = await storageService.getDownloadPresignedUrl(asset.fileKey);
 
-    // Queue worker job: Probe -> Metadata -> Thumbnail -> Waveform -> Proxy -> Search Index -> READY
     const job = await jobQueue.add<MediaProcessingJobPayload>(
       'media_processing',
       {
@@ -417,6 +745,244 @@ export class MediaService {
       // fallback
     }
 
+    return asset;
+  }
+
+  // ============================================================================
+  // MEDIA ASSET MUTATIONS (RENAME, MOVE, FAVORITE, ARCHIVE, RESTORE)
+  // ============================================================================
+  async rename(userId: string, mediaId: string, name: string): Promise<MediaAsset> {
+    const asset = await this.getById(userId, mediaId);
+    validateFilenameSecurity(name);
+    asset.name = name.trim();
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(mediaId, asset);
+    return asset;
+  }
+
+  async move(userId: string, mediaId: string, folderId: string | null | undefined): Promise<MediaAsset> {
+    const asset = await this.getById(userId, mediaId);
+    if (folderId) {
+      const folder = mockMediaFolders.get(folderId);
+      if (!folder || folder.userId !== userId) {
+        throw new NotFoundError(`Target folder not found: ${folderId}`);
+      }
+    }
+    asset.folderId = folderId || null;
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(mediaId, asset);
+    return asset;
+  }
+
+  async setFavorite(userId: string, mediaId: string, isFavorite = true): Promise<MediaAsset> {
+    const asset = await this.getById(userId, mediaId);
+    asset.isFavorite = isFavorite;
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(mediaId, asset);
+    return asset;
+  }
+
+  async archive(userId: string, mediaId: string): Promise<MediaAsset> {
+    const asset = await this.getById(userId, mediaId);
+    asset.status = 'ARCHIVED';
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(mediaId, asset);
+    return asset;
+  }
+
+  async restore(userId: string, mediaId: string): Promise<MediaAsset> {
+    const asset = mockMediaAssets.get(mediaId);
+    if (!asset || asset.userId !== userId) {
+      throw new NotFoundError(`Media asset not found: ${mediaId}`);
+    }
+    asset.status = 'READY';
+    asset.deletedAt = null;
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(mediaId, asset);
+    return asset;
+  }
+
+  // ============================================================================
+  // GET MEDIA BY ID
+  // ============================================================================
+  async getById(userIdOrId: string, idOrUserId?: string): Promise<MediaAsset> {
+    let id: string;
+    let userId: string;
+
+    if (idOrUserId) {
+      if (mockMediaAssets.has(userIdOrId)) {
+        id = userIdOrId;
+        userId = idOrUserId;
+      } else {
+        userId = userIdOrId;
+        id = idOrUserId;
+      }
+    } else {
+      id = userIdOrId;
+      userId = '';
+    }
+
+    const asset = mockMediaAssets.get(id);
+    if (!asset || asset.status === 'DELETED') {
+      throw new NotFoundError(`Media asset not found: ${id}`);
+    }
+
+    if (userId && asset.userId !== userId) {
+      throw new ForbiddenError('You do not have permission to access this media asset');
+    }
+
+    asset.downloadUrl = await storageService.getDownloadPresignedUrl(asset.fileKey);
+    return asset;
+  }
+
+  // ============================================================================
+  // DELETE MEDIA (SOFT DELETE & PERMANENT PURGE)
+  // ============================================================================
+  async delete(
+    userIdOrId: string,
+    idOrUserId?: string,
+    permanent = false
+  ): Promise<{ deleted: boolean; id: string }> {
+    let id: string;
+    let userId: string;
+
+    if (idOrUserId) {
+      if (mockMediaAssets.has(userIdOrId)) {
+        id = userIdOrId;
+        userId = idOrUserId;
+      } else {
+        userId = userIdOrId;
+        id = idOrUserId;
+      }
+    } else {
+      id = userIdOrId;
+      userId = '';
+    }
+
+    const asset = mockMediaAssets.get(id);
+    if (!asset || asset.status === 'DELETED') {
+      throw new NotFoundError(`Media asset not found: ${id}`);
+    }
+
+    if (userId && asset.userId !== userId) {
+      throw new ForbiddenError('You do not have permission to modify this media asset');
+    }
+
+    const now = new Date().toISOString();
+    if (permanent) {
+      try {
+        await storageService.deleteObject(asset.fileKey);
+        await storageService.deleteObject(`users/${asset.userId}/media/thumbnails/${asset.id}_cover.jpg`);
+        await storageService.deleteObject(`users/${asset.userId}/media/waveforms/${asset.id}_waveform.json`);
+        await storageService.deleteObject(`users/${asset.userId}/media/proxies/${asset.id}_720p_proxy.mp4`);
+      } catch {
+        // ignore
+      }
+      mockMediaAssets.delete(id);
+    } else {
+      asset.status = 'DELETED';
+      asset.deletedAt = now;
+      asset.updatedAt = now;
+      mockMediaAssets.set(id, asset);
+    }
+
+    try {
+      if (await db.isHealthy()) {
+        await db.query(
+          `UPDATE media_assets SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2;`,
+          [id, asset.userId]
+        );
+      }
+    } catch {
+      // fallback
+    }
+
+    return { deleted: true, id };
+  }
+
+  // ============================================================================
+  // CANCEL UPLOAD & CLEANUP PARTIAL OBJECTS
+  // ============================================================================
+  async cancel(id: string, userId: string): Promise<{ cancelled: boolean; id: string }> {
+    const asset = mockMediaAssets.get(id);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${id}`);
+    }
+
+    if (asset.userId !== userId) {
+      throw new ForbiddenError('You do not have permission to modify this media asset');
+    }
+
+    if (asset.uploadType === 'multipart' && asset.uploadId) {
+      try {
+        await storageService.abortMultipartUpload(asset.fileKey, asset.uploadId);
+      } catch {}
+    }
+
+    try {
+      await storageService.deleteObject(asset.fileKey);
+    } catch {}
+
+    if (asset.processingJobId) {
+      await jobQueue.cancelJob(asset.processingJobId);
+    }
+    mediaProcessorService.cancelProcessing(asset.id);
+
+    asset.status = 'FAILED';
+    asset.updatedAt = new Date().toISOString();
+    mockMediaAssets.set(id, asset);
+
+    return { cancelled: true, id };
+  }
+
+  // ============================================================================
+  // RETRY MEDIA
+  // ============================================================================
+  async retry(id: string, userId: string): Promise<MediaAsset> {
+    const asset = mockMediaAssets.get(id);
+    if (!asset) {
+      throw new NotFoundError(`Media asset not found: ${id}`);
+    }
+
+    if (asset.userId !== userId) {
+      throw new ForbiddenError('You do not have permission to modify this media asset');
+    }
+
+    let hasStorageObject = false;
+    try {
+      const head = await storageService.headObject(asset.fileKey);
+      hasStorageObject = !!head && head.contentLength > 0;
+    } catch {
+      hasStorageObject = false;
+    }
+
+    const now = new Date().toISOString();
+    if (hasStorageObject) {
+      asset.status = 'PROCESSING';
+      asset.updatedAt = now;
+
+      const job = await jobQueue.add<MediaProcessingJobPayload>(
+        'media_processing',
+        {
+          jobId: uuidv4(),
+          mediaId: asset.id,
+          userId,
+          projectId: asset.projectId,
+          fileKey: asset.fileKey,
+          mimeType: asset.mimeType,
+          category: asset.category,
+          fileName: asset.name,
+          fileSizeBytes: asset.fileSizeBytes,
+        },
+        { maxAttempts: 3, backoffMs: 50 }
+      );
+      asset.processingJobId = job.id;
+    } else {
+      asset.status = 'UPLOADING';
+      asset.updatedAt = now;
+    }
+
+    mockMediaAssets.set(id, asset);
     return asset;
   }
 
@@ -493,187 +1059,83 @@ export class MediaService {
   }
 
   // ============================================================================
-  // GET MEDIA BY ID
+  // LIST MEDIA (SEARCH, FILTERING, FOLDERS, FAVORITES, SORTING, PAGINATION)
   // ============================================================================
-  async getById(id: string, userId: string): Promise<MediaAsset> {
-    const asset = mockMediaAssets.get(id);
-    if (!asset || asset.status === 'DELETED') {
-      throw new NotFoundError(`Media asset not found: ${id}`);
-    }
-
-    if (asset.userId !== userId) {
-      throw new ForbiddenError('You do not have permission to access this media asset');
-    }
-
-    // Refresh download URL
-    asset.downloadUrl = await storageService.getDownloadPresignedUrl(asset.fileKey);
-    return asset;
-  }
-
-  // ============================================================================
-  // DELETE MEDIA (SOFT DELETE & STORAGE OBJECT CLEANUP)
-  // ============================================================================
-  async delete(id: string, userId: string): Promise<{ deleted: boolean; id: string }> {
-    const asset = await this.getById(id, userId);
-    const now = new Date().toISOString();
-
-    asset.status = 'DELETED';
-    asset.deletedAt = now;
-    asset.updatedAt = now;
-
-    // Delete object and generated artifacts from storage provider
-    try {
-      await storageService.deleteObject(asset.fileKey);
-      await storageService.deleteObject(`users/${userId}/media/thumbnails/${asset.id}_cover.jpg`);
-      await storageService.deleteObject(`users/${userId}/media/waveforms/${asset.id}_waveform.json`);
-      await storageService.deleteObject(`users/${userId}/media/proxies/${asset.id}_720p_proxy.mp4`);
-    } catch {
-      // ignore
-    }
-
-    mockMediaAssets.set(id, asset);
-
-    try {
-      if (await db.isHealthy()) {
-        await db.query(
-          `UPDATE media_assets SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2;`,
-          [id, userId]
-        );
-      }
-    } catch {
-      // fallback
-    }
-
-    return { deleted: true, id };
-  }
-
-  // ============================================================================
-  // CANCEL UPLOAD & CLEANUP PARTIAL OBJECTS
-  // ============================================================================
-  async cancel(id: string, userId: string): Promise<{ cancelled: boolean; id: string }> {
-    const asset = mockMediaAssets.get(id);
-    if (!asset) {
-      throw new NotFoundError(`Media asset not found: ${id}`);
-    }
-
-    if (asset.userId !== userId) {
-      throw new ForbiddenError('You do not have permission to modify this media asset');
-    }
-
-    // Abort active multipart session
-    if (asset.uploadType === 'multipart' && asset.uploadId) {
-      try {
-        await storageService.abortMultipartUpload(asset.fileKey, asset.uploadId);
-      } catch {
-        // ignore
-      }
-    }
-
-    // Cleanup partial or orphaned object from storage
-    try {
-      await storageService.deleteObject(asset.fileKey);
-    } catch {
-      // ignore
-    }
-
-    // Cancel active queue job and active worker child processes
-    if (asset.processingJobId) {
-      await jobQueue.cancelJob(asset.processingJobId);
-    }
-    mediaProcessorService.cancelProcessing(asset.id);
-
-    asset.status = 'FAILED';
-    asset.updatedAt = new Date().toISOString();
-    mockMediaAssets.set(id, asset);
-
-    return { cancelled: true, id };
-  }
-
-  // ============================================================================
-  // RETRY MEDIA
-  // ============================================================================
-  async retry(id: string, userId: string): Promise<MediaAsset> {
-    const asset = mockMediaAssets.get(id);
-    if (!asset) {
-      throw new NotFoundError(`Media asset not found: ${id}`);
-    }
-
-    if (asset.userId !== userId) {
-      throw new ForbiddenError('You do not have permission to modify this media asset');
-    }
-
-    let hasStorageObject = false;
-    try {
-      const head = await storageService.headObject(asset.fileKey);
-      hasStorageObject = !!head && head.contentLength > 0;
-    } catch {
-      hasStorageObject = false;
-    }
-
-    const now = new Date().toISOString();
-    if (hasStorageObject) {
-      asset.status = 'PROCESSING';
-      asset.updatedAt = now;
-
-      const job = await jobQueue.add<MediaProcessingJobPayload>(
-        'media_processing',
-        {
-          jobId: uuidv4(),
-          mediaId: asset.id,
-          userId,
-          projectId: asset.projectId,
-          fileKey: asset.fileKey,
-          mimeType: asset.mimeType,
-          category: asset.category,
-          fileName: asset.name,
-          fileSizeBytes: asset.fileSizeBytes,
-        },
-        { maxAttempts: 3, backoffMs: 50 }
-      );
-      asset.processingJobId = job.id;
-    } else {
-      asset.status = 'UPLOADING';
-      asset.updatedAt = now;
-    }
-
-    mockMediaAssets.set(id, asset);
-    return asset;
-  }
-
-  // ============================================================================
-  // LIST MEDIA
-  // ============================================================================
-  async list(userId: string, query: ListMediaQuery): Promise<{ media: MediaAsset[]; total: number }> {
+  async list(
+    userId: string,
+    query: Partial<ListMediaQuery> = {}
+  ): Promise<{ media: MediaAsset[]; total: number; page: number; limit: number; totalPages: number }> {
     let list = Array.from(mockMediaAssets.values()).filter((a) => a.userId === userId);
 
-    if (query.status !== 'all') {
+    if (query.status && query.status !== 'all') {
       list = list.filter((a) => a.status === query.status);
+    } else if (!query.status) {
+      list = list.filter((a) => a.status !== 'DELETED');
     }
 
-    if (query.category !== 'all') {
-      list = list.filter((a) => a.category === query.category);
+    const targetCategory = query.type || query.category;
+    if (targetCategory && targetCategory !== 'all') {
+      list = list.filter((a) => a.category.toLowerCase() === targetCategory.toLowerCase());
     }
 
     if (query.projectId) {
       list = list.filter((a) => a.projectId === query.projectId);
     }
 
-    if (query.search) {
-      const q = query.search.toLowerCase();
-      list = list.filter((a) => a.name.toLowerCase().includes(q));
+    if (query.folderId) {
+      if (query.folderId === 'root') {
+        list = list.filter((a) => !a.folderId);
+      } else {
+        list = list.filter((a) => a.folderId === query.folderId);
+      }
     }
 
-    const total = list.length;
-    const paginated = list.slice(query.offset, query.offset + query.limit);
+    if (query.favorite !== undefined) {
+      list = list.filter((a) => Boolean(a.isFavorite) === query.favorite);
+    }
 
-    // Refresh download URLs for ready assets
+    const searchTerm = query.search || query.q;
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      list = list.filter(
+        (a) => a.name.toLowerCase().includes(q) || a.originalFilename?.toLowerCase().includes(q)
+      );
+    }
+
+    const sortBy = query.sortBy || (query.recent ? 'createdAt' : 'createdAt');
+    const sortOrder = query.sortOrder || 'desc';
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === 'name') {
+        cmp = a.name.localeCompare(b.name);
+      } else if (sortBy === 'fileSizeBytes') {
+        cmp = a.fileSizeBytes - b.fileSizeBytes;
+      } else if (sortBy === 'durationSeconds') {
+        cmp = (a.durationSeconds || 0) - (b.durationSeconds || 0);
+      } else if (sortBy === 'updatedAt') {
+        cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+      } else {
+        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
+
+    const total = list.length;
+    const limit = query.limit || 20;
+    const offset = query.offset || 0;
+    const paginated = list.slice(offset, offset + limit);
+
     for (const item of paginated) {
       if (item.status === 'READY') {
         item.downloadUrl = await storageService.getDownloadPresignedUrl(item.fileKey);
       }
     }
 
-    return { media: paginated, total };
+    const page = Math.floor(offset / limit) + 1;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return { media: paginated, total, page, limit, totalPages };
   }
 
   // ============================================================================
@@ -695,7 +1157,6 @@ export class MediaService {
   }
 
   async confirmUpload(userId: string, input: ConfirmUploadInput): Promise<MediaAsset> {
-    // Find asset by fileKey or create one
     let asset = Array.from(mockMediaAssets.values()).find((a) => a.fileKey === input.fileKey);
     if (!asset) {
       const presignRes = await this.presign(userId, {
@@ -747,10 +1208,7 @@ export class MediaService {
     const fileKey = `generated/${input.userId}/${assetId}/${sanitizedName}`;
     const checksumSha256 = crypto.createHash('sha256').update(input.buffer).digest('hex');
 
-    // 1. Upload binary to object storage
     await storageService.putObject(fileKey, input.buffer, input.mimeType, checksumSha256);
-
-    // 2. Generate download presigned URL
     const downloadUrl = await storageService.getDownloadPresignedUrl(fileKey);
 
     const now = new Date().toISOString();
@@ -770,8 +1228,17 @@ export class MediaService {
       checksumSha256,
       uploadType: 'direct',
       status: 'READY',
+      isFavorite: false,
       retentionDays: 365,
       downloadUrl,
+      variants: {
+        original: {
+          fileKey,
+          url: downloadUrl,
+          sizeBytes: input.buffer.length,
+          mimeType: input.mimeType,
+        },
+      },
       metadata: {
         ...(input.metadata || {}),
         generated: true,
@@ -783,7 +1250,6 @@ export class MediaService {
 
     mockMediaAssets.set(assetId, asset);
 
-    // Persist to Postgres if healthy
     try {
       if (await db.isHealthy()) {
         await db.query(
@@ -825,4 +1291,3 @@ export class MediaService {
 }
 
 export const mediaService = new MediaService();
-

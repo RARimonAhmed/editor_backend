@@ -282,6 +282,11 @@ export class AdminController {
     return reply.status(200).send(createSuccessResponse(result));
   }
 
+  async getMediaSummary(_request: FastifyRequest, reply: FastifyReply) {
+    const summary = await adminService.getMediaSummary();
+    return reply.status(200).send(createSuccessResponse(summary));
+  }
+
   async getMediaDetails(request: FastifyRequest, reply: FastifyReply) {
     const { id } = request.params as { id: string };
     const details = await adminService.getMediaDetails(id);

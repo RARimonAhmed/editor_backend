@@ -1714,6 +1714,39 @@ export class AdminService {
   }
 
   /**
+   * Summary overview of media assets, storage, failures, largest files, and recent uploads for Admin Dashboard
+   */
+  async getMediaSummary(): Promise<{
+    mediaCount: number;
+    storageUsageBytes: number;
+    processingFailures: {
+      count: number;
+      failures: AdminMediaView[];
+    };
+    largestAssets: AdminMediaView[];
+    recentUploads: AdminMediaView[];
+  }> {
+    const all = Array.from(mockMediaAssets.values()).filter((a) => a.status !== 'DELETED');
+    const mediaCount = all.length;
+    const storageUsageBytes = all.reduce((sum, a) => sum + (a.fileSizeBytes || 0), 0);
+
+    const failed = all.filter((a) => a.status === 'FAILED');
+    const largest = [...all].sort((a, b) => (b.fileSizeBytes || 0) - (a.fileSizeBytes || 0)).slice(0, 10);
+    const recent = [...all].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 10);
+
+    return {
+      mediaCount,
+      storageUsageBytes,
+      processingFailures: {
+        count: failed.length,
+        failures: failed.map((m) => this.toAdminMediaView(m)),
+      },
+      largestAssets: largest.map((m) => this.toAdminMediaView(m)),
+      recentUploads: recent.map((m) => this.toAdminMediaView(m)),
+    };
+  }
+
+  /**
    * Deep media inspection (metadata, storage info, thumbnail, waveform, proxy, checksum, jobs, audit activity)
    */
   async getMediaDetails(mediaId: string): Promise<AdminMediaDetailView> {

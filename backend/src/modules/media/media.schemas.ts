@@ -2,7 +2,17 @@ import { z } from 'zod';
 
 export type MediaCategory = 'video' | 'audio' | 'image' | 'font' | 'lut' | 'sticker' | 'template';
 
-export type MediaLifecycleStatus = 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED' | 'DELETED' | 'ARCHIVED';
+export type MediaLifecycleStatus =
+  | 'UPLOADING'
+  | 'UPLOADED'
+  | 'PROCESSING'
+  | 'READY'
+  | 'FAILED'
+  | 'DELETING'
+  | 'DELETED'
+  | 'ARCHIVED';
+
+export type MediaOrientation = 'landscape' | 'portrait' | 'square';
 
 // Maximum size quotas per category
 export const MEDIA_SIZE_LIMITS: Record<MediaCategory, number> = {
@@ -98,12 +108,48 @@ export function inferCategoryFromMime(mime: string, filename: string): MediaCate
   return 'template';
 }
 
+export interface MediaVariants {
+  original?: {
+    fileKey: string;
+    url?: string;
+    sizeBytes: number;
+    mimeType: string;
+  };
+  thumbnail?: {
+    fileKey: string;
+    url?: string;
+    width: number;
+    height: number;
+  };
+  waveform?: {
+    fileKey?: string;
+    url?: string;
+    peaks: number[];
+    channels: number;
+    samplesPerPixel: number;
+  };
+  proxy?: {
+    fileKey: string;
+    url?: string;
+    resolution: string;
+    codec: string;
+    sizeBytes: number;
+  };
+  previewDerivative?: {
+    fileKey: string;
+    url?: string;
+    resolution: string;
+    durationSeconds: number;
+  };
+}
+
 // POST /v1/media/presign
 export const presignUploadSchema = z.object({
   fileName: z.string().min(1, 'File name is required'),
   mimeType: z.string().min(1, 'MIME type is required'),
   fileSizeBytes: z.number().int().positive('File size must be positive'),
   category: z.enum(['video', 'audio', 'image', 'font', 'lut', 'sticker', 'template']).optional(),
+  folderId: z.string().optional(),
   projectId: z.string().optional(),
   checksumSha256: z.string().regex(/^[a-fA-F0-9]{64}$/, 'Checksum must be 64 hex characters').optional(),
   uploadType: z.enum(['auto', 'direct', 'multipart']).default('auto'),
@@ -128,22 +174,82 @@ export const completeUploadSchema = z.object({
   height: z.number().int().positive().optional(),
 });
 
+// POST /v1/media/register
+export const registerMediaSchema = z.object({
+  fileName: z.string().min(1, 'File name is required'),
+  mimeType: z.string().min(1, 'MIME type is required'),
+  fileSizeBytes: z.number().int().positive('File size must be positive'),
+  category: z.enum(['video', 'audio', 'image', 'font', 'lut', 'sticker', 'template']).optional(),
+  folderId: z.string().optional(),
+  projectId: z.string().optional(),
+  fileKey: z.string().optional(),
+  checksumSha256: z.string().optional(),
+  durationSeconds: z.number().optional(),
+  width: z.number().int().optional(),
+  height: z.number().int().optional(),
+  framerate: z.number().optional(),
+  codec: z.string().optional(),
+  bitrateKbps: z.number().optional(),
+  audioChannels: z.number().int().optional(),
+  audioSampleRate: z.number().int().optional(),
+  rotation: z.number().optional(),
+});
+
 // POST /v1/media/upload (Direct upload for small assets)
 export const directUploadSchema = z.object({
   fileName: z.string().min(1, 'File name is required'),
   mimeType: z.string().min(1, 'MIME type is required'),
   fileBase64: z.string().min(1, 'Base64 encoded file data is required'),
   category: z.enum(['video', 'audio', 'image', 'font', 'lut', 'sticker', 'template']).optional(),
+  folderId: z.string().optional(),
   projectId: z.string().optional(),
   checksumSha256: z.string().optional(),
+});
+
+// PATCH /v1/media/:id/rename
+export const renameMediaSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(255),
+});
+
+// PATCH /v1/media/:id/move
+export const moveMediaSchema = z.object({
+  folderId: z.string().nullable().optional(),
+});
+
+// POST /v1/media/:id/favorite
+export const favoriteMediaSchema = z.object({
+  isFavorite: z.boolean().default(true),
+});
+
+// FOLDER SCHEMAS
+export const createFolderSchema = z.object({
+  name: z.string().min(1, 'Folder name is required').max(100),
+  parentId: z.string().nullable().optional(),
+  color: z.string().optional(),
+});
+
+export const renameFolderSchema = z.object({
+  name: z.string().min(1, 'Folder name is required').max(100),
+  color: z.string().optional(),
+});
+
+export const moveFolderSchema = z.object({
+  parentId: z.string().nullable().optional(),
 });
 
 // GET /v1/media (List query)
 export const listMediaQuerySchema = z.object({
   category: z.enum(['video', 'audio', 'image', 'font', 'lut', 'sticker', 'template', 'all']).default('all'),
-  status: z.enum(['UPLOADING', 'PROCESSING', 'READY', 'FAILED', 'DELETED', 'all']).default('READY'),
+  type: z.string().optional(),
+  status: z.enum(['UPLOADING', 'UPLOADED', 'PROCESSING', 'READY', 'FAILED', 'DELETING', 'DELETED', 'ARCHIVED', 'all']).default('READY'),
+  folderId: z.string().optional(),
+  favorite: z.preprocess((v) => (v === 'true' || v === true ? true : v === 'false' || v === false ? false : undefined), z.boolean().optional()),
+  recent: z.preprocess((v) => (v === 'true' || v === true ? true : v === 'false' || v === false ? false : undefined), z.boolean().optional()),
   projectId: z.string().optional(),
   search: z.string().optional(),
+  q: z.string().optional(),
+  sortBy: z.enum(['createdAt', 'updatedAt', 'name', 'fileSizeBytes', 'durationSeconds']).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
   limit: z.coerce.number().int().positive().max(100).default(20),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
@@ -169,8 +275,14 @@ export const confirmUploadSchema = z.object({
 
 export type PresignUploadInput = z.infer<typeof presignUploadSchema>;
 export type CompleteUploadInput = z.infer<typeof completeUploadSchema>;
+export type RegisterMediaInput = z.infer<typeof registerMediaSchema>;
 export type DirectUploadInput = z.infer<typeof directUploadSchema>;
+export type RenameMediaInput = z.infer<typeof renameMediaSchema>;
+export type MoveMediaInput = z.infer<typeof moveMediaSchema>;
+export type FavoriteMediaInput = z.infer<typeof favoriteMediaSchema>;
+export type CreateFolderInput = z.infer<typeof createFolderSchema>;
+export type RenameFolderInput = z.infer<typeof renameFolderSchema>;
+export type MoveFolderInput = z.infer<typeof moveFolderSchema>;
 export type ListMediaQuery = z.infer<typeof listMediaQuerySchema>;
 export type RequestUploadUrlInput = z.infer<typeof requestUploadUrlSchema>;
 export type ConfirmUploadInput = z.infer<typeof confirmUploadSchema>;
-
