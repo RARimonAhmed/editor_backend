@@ -33,7 +33,16 @@ export type RealtimeEventType =
   | 'AI_JOB_PROGRESS'
   | 'AI_JOB_COMPLETED'
   | 'AI_JOB_FAILED'
-  | 'metrics_updated';
+  | 'metrics_updated'
+  // Command 24 Render Event Contract
+  | 'render:queued'
+  | 'render:started'
+  | 'render:progress'
+  | 'render:stage'
+  | 'render:cancelling'
+  | 'render:cancelled'
+  | 'render:completed'
+  | 'render:failed';
 
 export const REALTIME_EVENTS = {
   RENDER_JOB_CREATED: 'render_job_created',
@@ -42,11 +51,32 @@ export const REALTIME_EVENTS = {
   RENDER_JOB_COMPLETED: 'render_job_completed',
   RENDER_JOB_FAILED: 'render_job_failed',
   RENDER_JOB_CANCELLED: 'render_job_cancelled',
+  RENDER_QUEUED: 'render:queued',
+  RENDER_STARTED: 'render:started',
+  RENDER_PROGRESS: 'render:progress',
+  RENDER_STAGE: 'render:stage',
+  RENDER_CANCELLING: 'render:cancelling',
+  RENDER_CANCELLED: 'render:cancelled',
+  RENDER_COMPLETED: 'render:completed',
+  RENDER_FAILED: 'render:failed',
   AI_JOB_CREATED: 'AI_JOB_CREATED',
   AI_JOB_PROGRESS: 'AI_JOB_PROGRESS',
   AI_JOB_COMPLETED: 'AI_JOB_COMPLETED',
   AI_JOB_FAILED: 'AI_JOB_FAILED',
 } as const;
+
+export interface RenderRealtimePayload {
+  jobId: string;
+  projectId: string;
+  userId: string;
+  status: string;
+  progress?: number;
+  stage: string;
+  timestamp: string;
+  errorCode?: string;
+  errorMessage?: string;
+  outputObject?: any;
+}
 
 export interface RealtimeEnvelope<T = any> {
   eventId: string;

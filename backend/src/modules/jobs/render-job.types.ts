@@ -64,11 +64,158 @@ export interface RenderJobWorkerMetadata {
   heartbeatAt?: string;
 }
 
+/**
+ * Immutable Source Media Asset Snapshot Entry
+ */
+export interface RenderSourceMediaEntry {
+  assetId: string;
+  name: string;
+  fileKey: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  durationSeconds?: number;
+  sha256?: string;
+  status: string;
+}
+
+/**
+ * Complete, Immutable Snapshot of the Render-Relevant Project State
+ * Captures timeline, tracks, clips, trims, transforms, keyframes, effects,
+ * transitions, masks, chroma, audio, text, captions, and export settings.
+ */
+export interface RenderProjectSnapshot {
+  snapshotVersion: number;
+  snapshotHash: string;
+  projectId: string;
+  projectVersion: number;
+  projectVersionId?: string | null;
+  projectTitle: string;
+  createdAt: string;
+  canvas: {
+    resolutionWidth: number;
+    resolutionHeight: number;
+    framerate: number;
+    aspectRatio: string;
+    colorSpace: string;
+    backgroundColor: string;
+  };
+  timeline: {
+    duration: number;
+    framerate: number;
+    tracks: Array<{
+      id: string;
+      type: 'video' | 'audio' | 'text' | 'effect' | 'image' | 'overlay' | 'caption';
+      name: string;
+      muted: boolean;
+      locked: boolean;
+      clips: Array<{
+        id: string;
+        name: string;
+        mediaAssetId?: string;
+        assetId?: string;
+        start: number;
+        duration: number;
+        sourceStart: number;
+        speed: number;
+        volume: number;
+        trims?: {
+          inPointSeconds: number;
+          outPointSeconds: number;
+          sourceDurationSeconds?: number;
+        };
+        transform?: {
+          scaleX?: number;
+          scaleY?: number;
+          positionX?: number;
+          positionY?: number;
+          rotationDegrees?: number;
+          opacity?: number;
+          anchorX?: number;
+          anchorY?: number;
+        };
+        keyframes?: Array<{
+          id?: string;
+          property: string;
+          timeMs: number;
+          value: unknown;
+          easing: string;
+        }>;
+        effects?: Array<{
+          id?: string;
+          type: string;
+          name?: string;
+          enabled: boolean;
+          parameters: Record<string, unknown>;
+        }>;
+        transitions?: {
+          in?: { type: string; durationSeconds: number; easing?: string };
+          out?: { type: string; durationSeconds: number; easing?: string };
+        };
+        masks?: Array<{
+          type: string;
+          pathOrShape?: string;
+          inverted?: boolean;
+          feather?: number;
+        }>;
+        chroma?: {
+          enabled: boolean;
+          keyColor?: string;
+          similarity?: number;
+          smoothness?: number;
+          spill?: number;
+        };
+        audio?: {
+          volume: number;
+          gainDb: number;
+          pan: number;
+          fadeInMs: number;
+          fadeOutMs: number;
+          pitchShift: number;
+          equalizer?: Record<string, unknown>;
+        };
+        text?: {
+          content: string;
+          fontFamily: string;
+          fontSize: number;
+          fontWeight: string;
+          fontStyle: string;
+          color: string;
+          backgroundColor?: string;
+          outlineColor?: string;
+          outlineWidth?: number;
+          shadowColor?: string;
+          alignment: string;
+          letterSpacing?: number;
+          lineHeight?: number;
+          position?: { x: number; y: number };
+        };
+        captions?: Array<{
+          id?: string;
+          text: string;
+          startMs: number;
+          endMs: number;
+          speaker?: string;
+          words?: Array<{ word: string; startMs: number; endMs: number; confidence?: number }>;
+        }>;
+      }>;
+    }>;
+    markers?: Array<{
+      id?: string;
+      time: number;
+      label: string;
+      color?: string;
+    }>;
+  };
+  sourceMedia: Record<string, RenderSourceMediaEntry>;
+  exportSettings: RenderJobSettings;
+}
+
 export interface RenderJob {
   id: string;
   userId: string;
   projectId: string;
   projectVersionId?: string | null;
+  projectVersion?: number;
   status: RenderJobStatus;
   settings: RenderJobSettings;
   progress: number;
@@ -81,6 +228,8 @@ export interface RenderJob {
   maxAttempts: number;
   creditReservationId?: string | null;
   creditCost: number;
+  snapshot?: RenderProjectSnapshot;
+  snapshotHash?: string;
   createdAt: string;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -91,6 +240,8 @@ export interface RenderJob {
 export interface CreateRenderJobInput {
   projectId: string;
   projectVersionId?: string;
+  versionNumber?: number;
+  version?: number;
   settings: Partial<RenderJobSettings> & {
     format?: RenderFormat;
     resolutionWidth?: number;
@@ -121,6 +272,9 @@ export interface RenderQueuePayload {
   renderJobId: string;
   projectId: string;
   projectVersionId?: string | null;
+  projectVersion?: number;
+  snapshotHash?: string;
+  snapshot?: RenderProjectSnapshot;
 }
 
 /**

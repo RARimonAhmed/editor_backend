@@ -19,6 +19,8 @@ import { createErrorResponse, createSuccessResponse } from './core/response.js';
 import { db } from './database/client.js';
 import { redisService } from './services/redis/index.js';
 import { storageService } from './services/storage/index.js';
+import { jobQueue } from './services/queue/index.js';
+
 
 // Route modules
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -194,21 +196,51 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.redirect('/docs');
   });
 
-  // Health Checks
+  // Health & Readiness Endpoints (Truthful multi-component diagnostic)
   app.get(
     '/health',
     {
       schema: {
-        description: 'Liveness check endpoint',
+        description: 'Truthful liveness and health diagnostics covering application, database, redis, storage, and queue',
         tags: ['System'],
       },
     },
     async (_req, reply) => {
-      return reply.status(200).send(
+      const [dbHealth, redisHealth, storageHealth, queueHealth] = await Promise.all([
+        db.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, error: err.message, latencyMs: -1 })),
+        redisService.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, error: err.message, latencyMs: -1 })),
+        storageService.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, bucket: env.STORAGE_BUCKET, error: err.message, latencyMs: -1 })),
+        jobQueue.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, error: err.message, activeWorkers: 0, totalQueues: 0 })),
+      ]);
+
+      const memUsage = process.memoryUsage();
+      const isAllHealthy = dbHealth.healthy && redisHealth.healthy && storageHealth.healthy && queueHealth.healthy;
+      const statusCode = isAllHealthy ? 200 : 503;
+
+      return reply.status(statusCode).send(
         createSuccessResponse({
-          status: 'healthy',
+          status: isAllHealthy ? 'healthy' : 'degraded',
           timestamp: new Date().toISOString(),
           uptimeSeconds: Math.floor(process.uptime()),
+          environment: env.NODE_ENV,
+          allowDevFallbacks: env.ALLOW_DEV_FALLBACKS,
+          components: {
+            application: {
+              healthy: true,
+              version: '1.0.0',
+              pid: process.pid,
+              uptimeSeconds: Math.floor(process.uptime()),
+              memoryUsageMb: {
+                rss: Math.round(memUsage.rss / 1024 / 1024),
+                heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+                heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+              },
+            },
+            database: dbHealth,
+            redis: redisHealth,
+            storage: storageHealth,
+            queue: queueHealth,
+          },
         })
       );
     }
@@ -218,25 +250,43 @@ export async function buildApp(): Promise<FastifyInstance> {
     '/ready',
     {
       schema: {
-        description: 'Readiness check verifying database, redis, and storage dependencies',
+        description: 'Truthful readiness check verifying database, redis, storage, and queue dependencies',
         tags: ['System'],
       },
     },
     async (_req, reply) => {
-      const dbReady = await db.isHealthy();
-      const redisReady = await redisService.isHealthy();
-      const storageReady = await storageService.isHealthy();
+      const [dbHealth, redisHealth, storageHealth, queueHealth] = await Promise.all([
+        db.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, error: err.message, latencyMs: -1 })),
+        redisService.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, error: err.message, latencyMs: -1 })),
+        storageService.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, bucket: env.STORAGE_BUCKET, error: err.message, latencyMs: -1 })),
+        jobQueue.getHealthDetails().catch((err) => ({ healthy: false, driver: 'error' as const, error: err.message, activeWorkers: 0, totalQueues: 0 })),
+      ]);
 
-      const allReady = dbReady && redisReady && storageReady;
-      const status = allReady ? 200 : 503;
+      const allReady = dbHealth.healthy && redisHealth.healthy && storageHealth.healthy && queueHealth.healthy;
+      const statusCode = allReady ? 200 : 503;
 
-      return reply.status(status).send(
+      return reply.status(statusCode).send(
         createSuccessResponse({
           ready: allReady,
+          timestamp: new Date().toISOString(),
           services: {
-            database: dbReady ? 'connected' : 'degraded',
-            redis: redisReady ? 'connected' : 'degraded',
-            storage: storageReady ? 'connected' : 'degraded',
+            database: dbHealth.healthy ? 'connected' : 'degraded',
+            redis: redisHealth.healthy ? 'connected' : 'degraded',
+            storage: storageHealth.healthy ? 'connected' : 'degraded',
+            queue: queueHealth.healthy ? 'ready' : 'degraded',
+          },
+          components: {
+            application: 'ready',
+            database: dbHealth.healthy ? 'connected' : 'degraded',
+            redis: redisHealth.healthy ? 'connected' : 'degraded',
+            storage: storageHealth.healthy ? 'connected' : 'degraded',
+            queue: queueHealth.healthy ? 'ready' : 'degraded',
+          },
+          details: {
+            database: dbHealth,
+            redis: redisHealth,
+            storage: storageHealth,
+            queue: queueHealth,
           },
         })
       );

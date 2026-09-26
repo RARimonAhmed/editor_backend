@@ -17,8 +17,20 @@ export function registerQueueProcessors() {
     return mediaProcessorService.processMediaJob(job);
   });
 
-  // 2. Video Timeline Render & Export
+  // 2. Video Timeline Render Pipeline (Dedicated Real Worker)
+  jobQueue.process('render_jobs', async (job: Job) => {
+    const { renderWorker } = await import('../../modules/jobs/render-worker.service.js');
+    return renderWorker.processRenderJob(job);
+  });
+
+  // 2b. Legacy Video Timeline Render & Export (Delegates to real renderWorker)
   jobQueue.process('render_export', async (job: Job) => {
+    const { renderWorker } = await import('../../modules/jobs/render-worker.service.js');
+    if (job.data.renderJobId) {
+      return renderWorker.processRenderJob(job);
+    }
+
+    // For raw render_export payloads
     const { jobId, projectId, userId, format, resolutionWidth, resolutionHeight, framerate } = job.data;
     logger.info(
       { jobId, projectId, format, resolution: `${resolutionWidth}x${resolutionHeight}`, fps: framerate },
@@ -27,13 +39,7 @@ export function registerQueueProcessors() {
 
     try {
       await jobsService.updateJobProgress(jobId, 15, 'processing');
-      await delay(20);
-      await jobsService.updateJobProgress(jobId, 50, 'processing');
-      await delay(20);
-      await jobsService.updateJobProgress(jobId, 85, 'processing');
-      await delay(20);
-
-      const outputKey = `exports/${projectId}/${jobId}.${format}`;
+      const outputKey = `exports/${projectId}/${jobId}.${format || 'mp4'}`;
       const outputUrl = `${env.STORAGE_PUBLIC_URL_PREFIX}/${outputKey}`;
 
       await jobsService.updateJobProgress(jobId, 100, 'completed', {
@@ -44,6 +50,7 @@ export function registerQueueProcessors() {
       });
 
       realtimeService.notifyExportComplete(jobId, userId || '', projectId, outputUrl);
+      return { outputUrl, outputKey, format };
     } catch (err: any) {
       const errMsg = err instanceof Error ? err.message : String(err);
       realtimeService.notifyExportFailed(jobId, userId || '', projectId, errMsg);

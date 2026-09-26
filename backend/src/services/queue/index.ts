@@ -37,6 +37,14 @@ export interface Job<T = any> {
 
 export type JobProcessor<T = any, R = any> = (job: Job<T>) => Promise<R>;
 
+export interface QueueHealthResult {
+  healthy: boolean;
+  driver: 'bullmq' | 'memory';
+  activeWorkers: number;
+  totalQueues: number;
+  error?: string;
+}
+
 export interface IJobQueue {
   add<T>(type: string, data: T, options?: JobOptions): Promise<Job<T>>;
   process<T, R>(type: string, processor: JobProcessor<T, R>): void;
@@ -49,6 +57,9 @@ export interface IJobQueue {
   updateProgress(id: string, progress: number, currentStep?: string, extra?: Record<string, any>): Promise<void>;
   recoverStalledJobs(type?: string): Promise<number>;
   restartWorker<T, R>(type: string, newProcessor?: JobProcessor<T, R>): Promise<void>;
+  isHealthy(): Promise<boolean>;
+  getHealthDetails(): Promise<QueueHealthResult>;
+  close(): Promise<void>;
   on(event: string, listener: (...args: any[]) => void): void;
   off(event: string, listener: (...args: any[]) => void): void;
 }
@@ -57,6 +68,27 @@ export class MemoryJobQueue extends EventEmitter implements IJobQueue {
   private jobs = new Map<string, Job>();
   private processors = new Map<string, JobProcessor>();
   private deadLetterJobs = new Map<string, Job>();
+
+  async isHealthy(): Promise<boolean> {
+    return true;
+  }
+
+  async getHealthDetails(): Promise<QueueHealthResult> {
+    return {
+      healthy: true,
+      driver: 'memory',
+      activeWorkers: this.processors.size,
+      totalQueues: 1,
+    };
+  }
+
+  async close(): Promise<void> {
+    this.jobs.clear();
+    this.processors.clear();
+    this.deadLetterJobs.clear();
+    this.removeAllListeners();
+  }
+
 
   async add<T>(type: string, data: T, options?: JobOptions): Promise<Job<T>> {
     const id = options?.jobId || uuidv4();

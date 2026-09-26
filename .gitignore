@@ -28,10 +28,11 @@ coverage/
 .nyc_output/
 
 # Local Media Storage / Temp Data
-uploads/
-storage/
-temp/
-scratch/
+/uploads/
+/storage/
+/temp/
+/scratch/
+!backend/src/services/storage/
 
 # IDE & OS
 .DS_Store

@@ -2,16 +2,27 @@ import { Redis } from 'ioredis';
 import { env } from '../../config/env.js';
 import { logger } from '../../core/logger.js';
 
+export interface RedisHealthResult {
+  healthy: boolean;
+  driver: 'redis' | 'memory';
+  latencyMs?: number;
+  status?: string;
+  clientStatus?: string;
+  error?: string;
+}
+
 export interface IRedisService {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
   del(key: string): Promise<void>;
   publish(channel: string, message: string): Promise<number>;
   isHealthy(): Promise<boolean>;
+  getHealthDetails(): Promise<RedisHealthResult>;
+  getClient?(): Redis;
   close(): Promise<void>;
 }
 
-class MemoryRedisService implements IRedisService {
+export class MemoryRedisService implements IRedisService {
   private store = new Map<string, { value: string; expiresAt?: number }>();
 
   async get(key: string): Promise<string | null> {
@@ -42,26 +53,72 @@ class MemoryRedisService implements IRedisService {
     return true;
   }
 
+  async getHealthDetails(): Promise<RedisHealthResult> {
+    return {
+      healthy: true,
+      driver: 'memory',
+      latencyMs: 0,
+      status: 'ready',
+      clientStatus: 'ready',
+    };
+  }
+
   async close(): Promise<void> {
     this.store.clear();
   }
 }
 
-class RealRedisService implements IRedisService {
-  private client: Redis;
+export class RealRedisService implements IRedisService {
+  public client: Redis;
 
-  constructor() {
-    this.client = new Redis(env.REDIS_URL, {
-      maxRetriesPerRequest: 2,
+  constructor(customUrl?: string, customOptions?: Record<string, any>) {
+    const targetUrl = customUrl || env.REDIS_URL;
+    const isTls = env.REDIS_TLS || targetUrl.startsWith('rediss://');
+
+    this.client = new Redis(targetUrl, {
+      maxRetriesPerRequest: null, // Required by BullMQ & high-resilience producers
+      connectTimeout: env.REDIS_CONNECT_TIMEOUT_MS,
+      keepAlive: 10000,
+      enableReadyCheck: true,
+      tls: isTls ? {} : undefined,
       retryStrategy: (times) => {
-        if (times > 3) return null; // stop retrying
-        return Math.min(times * 200, 1000);
+        if (times > env.REDIS_MAX_RETRIES) {
+          logger.error({ times }, 'Redis connection retry attempts exhausted');
+          return null;
+        }
+        const delay = Math.min(times * 150 + Math.random() * 100, 3000);
+        logger.warn({ times, delay }, 'Retrying Redis connection with exponential backoff');
+        return delay;
       },
+      reconnectOnError: (err) => {
+        const targetError = 'READONLY';
+        if (err.message.includes(targetError)) {
+          return true; // Reconnect on read-only replica switchover
+        }
+        return false;
+      },
+      ...customOptions,
+    });
+
+    this.client.on('connect', () => {
+      logger.info('Connected to Redis server');
+    });
+
+    this.client.on('ready', () => {
+      logger.info('Redis client connection ready');
     });
 
     this.client.on('error', (err) => {
-      logger.error({ err }, 'Redis connection error');
+      logger.error({ err: err.message }, 'Redis connection error');
     });
+
+    this.client.on('close', () => {
+      logger.warn('Redis client connection closed');
+    });
+  }
+
+  getClient(): Redis {
+    return this.client;
   }
 
   async get(key: string): Promise<string | null> {
@@ -85,31 +142,83 @@ class RealRedisService implements IRedisService {
   }
 
   async isHealthy(): Promise<boolean> {
+    const details = await this.getHealthDetails();
+    return details.healthy;
+  }
+
+  async getHealthDetails(): Promise<RedisHealthResult> {
+    const start = Date.now();
     try {
+      if (this.client.status !== 'ready' && this.client.status !== 'connect') {
+        return {
+          healthy: false,
+          driver: 'redis',
+          status: this.client.status,
+          latencyMs: Date.now() - start,
+          error: `Redis not ready (status: ${this.client.status})`,
+        };
+      }
+
       const pong = await this.client.ping();
-      return pong === 'PONG';
-    } catch {
-      return false;
+      const latencyMs = Date.now() - start;
+      const isAlive = pong === 'PONG';
+      return {
+        healthy: isAlive,
+        driver: 'redis',
+        latencyMs,
+        status: this.client.status,
+      };
+    } catch (err) {
+      return {
+        healthy: false,
+        driver: 'redis',
+        latencyMs: Date.now() - start,
+        status: this.client.status,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
   async close(): Promise<void> {
-    await this.client.quit();
+    try {
+      await this.client.quit();
+    } catch {
+      this.client.disconnect();
+    }
   }
 }
 
 export function createRedisService(): IRedisService {
-  if (env.NODE_ENV === 'test' || env.REDIS_ENABLE_FALLBACK) {
-    // In test or local dev without live Redis, safely use in-memory adapter
+  if (env.NODE_ENV === 'production') {
+    if (env.REDIS_ENABLE_FALLBACK) {
+      const msg = '[RedisService FATAL] Production mode prohibits REDIS_ENABLE_FALLBACK. Must use a real dedicated Redis instance.';
+      logger.fatal(msg);
+      throw new Error(msg);
+    }
+    try {
+      logger.info('Initializing Production Redis Service');
+      return new RealRedisService();
+    } catch (error) {
+      logger.fatal({ error }, 'FATAL: Failed to initialize production Redis client');
+      throw new Error(`Production Redis initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (env.NODE_ENV === 'test') {
     return new MemoryRedisService();
   }
 
-  try {
-    return new RealRedisService();
-  } catch (error) {
-    logger.warn('Failed to initialize live Redis, using in-memory fallback');
-    return new MemoryRedisService();
+  // Development mode:
+  if (env.REDIS_ENABLE_FALLBACK || env.ALLOW_DEV_FALLBACKS) {
+    try {
+      return new RealRedisService();
+    } catch (error) {
+      logger.warn('Failed to initialize live Redis, using in-memory fallback because dev fallback is enabled');
+      return new MemoryRedisService();
+    }
   }
+
+  return new RealRedisService();
 }
 
 export const redisService = createRedisService();

@@ -1,8 +1,11 @@
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { db, withTransaction } from '../../database/client.js';
 import { jobQueue } from '../../services/queue/index.js';
+import { storageService } from '../../services/storage/index.js';
 import { creditsService } from '../credits/credits.service.js';
 import { projectsService } from '../projects/projects.service.js';
+import { mockMediaAssets } from '../media/media.service.js';
 import { realtimeService } from '../realtime/realtime.service.js';
 import {
   NotFoundError,
@@ -16,6 +19,8 @@ import {
   RenderJob,
   RenderJobStatus,
   RenderJobSettings,
+  RenderProjectSnapshot,
+  RenderSourceMediaEntry,
   CreateRenderJobInput,
   ListRenderJobsQuery,
   PaginatedRenderJobsDto,
@@ -175,7 +180,313 @@ export class RenderJobService {
   }
 
   /**
-   * Create and enqueue a new cloud render job
+   * Deterministic canonical JSON serialization ensuring consistent hashing
+   */
+  private canonicalize(obj: any): string {
+    if (obj === null || typeof obj !== 'object') {
+      return JSON.stringify(obj);
+    }
+    if (Array.isArray(obj)) {
+      return '[' + obj.map((item) => this.canonicalize(item)).join(',') + ']';
+    }
+    const keys = Object.keys(obj).sort();
+    return (
+      '{' +
+      keys
+        .map((key) => JSON.stringify(key) + ':' + this.canonicalize(obj[key]))
+        .join(',') +
+      '}'
+    );
+  }
+
+  /**
+   * Locates any active or completed render job that matches the exact snapshot hash and export settings
+   */
+  public findIdempotentJob(
+    userId: string,
+    projectId: string,
+    snapshotHash: string,
+    settings: RenderJobSettings
+  ): RenderJob | null {
+    const settingsStr = JSON.stringify(settings);
+    for (const job of mockRenderJobs.values()) {
+      if (
+        job.userId === userId &&
+        job.projectId === projectId &&
+        job.snapshotHash === snapshotHash &&
+        JSON.stringify(job.settings) === settingsStr &&
+        ['queued', 'starting', 'running', 'completed'].includes(job.status)
+      ) {
+        return job;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Builds an immutable render snapshot containing the complete render-relevant project state:
+   * timeline, tracks, clips, trims, transforms, keyframes, effects, transitions, masks, chroma,
+   * audio, text, captions, and export settings.
+   * Validates referenced media assets and rejects missing/deleted media before queueing.
+   */
+  public async buildRenderSnapshot(
+    projectId: string,
+    userId: string,
+    requestedVersion?: number,
+    projectVersionId?: string | null,
+    validatedSettings?: RenderJobSettings
+  ): Promise<RenderProjectSnapshot> {
+    const project = await projectsService.getById(projectId, userId);
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${projectId}`);
+    }
+
+    let targetVersion = requestedVersion ?? project.version;
+    let targetVersionId = projectVersionId || null;
+    let canvas = project.canvas;
+    let timeline = project.timeline;
+
+    // If a specific historical version is requested
+    if (requestedVersion !== undefined) {
+      const versionRecord = await projectsService.getProjectVersion(projectId, requestedVersion, userId);
+      if (!versionRecord) {
+        throw new NotFoundError(`Project version ${requestedVersion} not found for project ${projectId}`);
+      }
+      targetVersion = versionRecord.versionNumber;
+      targetVersionId = versionRecord.id;
+      canvas = versionRecord.snapshotData.canvas || canvas;
+      timeline = versionRecord.snapshotData.timeline || timeline;
+    }
+
+    // 1. Validate Canvas
+    const resolutionWidth = canvas?.resolutionWidth || 1920;
+    const resolutionHeight = canvas?.resolutionHeight || 1080;
+    const framerate = canvas?.framerate || 30.0;
+    const aspectRatio = canvas?.aspectRatio || '16:9';
+    const colorSpace = canvas?.colorSpace || 'rec709';
+    const backgroundColor = canvas?.backgroundColor || '#000000';
+
+    if (resolutionWidth <= 0 || resolutionHeight <= 0) {
+      throw new ValidationError('Invalid canvas configuration: resolution width and height must be positive numbers');
+    }
+
+    // 2. Validate Timeline & Tracks
+    const rawTracks = timeline?.tracks || [];
+    if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
+      throw new ValidationError('Cannot render project: Timeline contains no tracks');
+    }
+
+    let computedDuration = timeline?.duration || 0;
+    let maxClipEnd = 0;
+    let totalClipCount = 0;
+    const sourceMediaMap: Record<string, RenderSourceMediaEntry> = {};
+
+    // 3. Scan clips, validate timings, and resolve/detect source media assets
+    for (const track of rawTracks) {
+      const clips = track.clips || [];
+      for (const clip of clips) {
+        totalClipCount++;
+        const clipDuration = clip.duration ?? 0;
+        const clipStart = clip.start ?? 0;
+
+        if (clipDuration <= 0) {
+          throw new ValidationError(
+            `Invalid clip duration on clip '${clip.name || clip.id}': duration must be greater than zero`
+          );
+        }
+        if (clipStart < 0) {
+          throw new ValidationError(
+            `Invalid clip start on clip '${clip.name || clip.id}': start cannot be negative`
+          );
+        }
+
+        const clipEnd = clipStart + clipDuration;
+        if (clipEnd > maxClipEnd) {
+          maxClipEnd = clipEnd;
+        }
+
+        // Validate media asset reference if present
+        const rawAssetId = (clip as any).mediaAssetId || (clip as any).assetId;
+        const assetId = typeof rawAssetId === 'string' ? rawAssetId : (rawAssetId?.id ? String(rawAssetId.id) : '');
+        if (assetId) {
+          let asset: any = mockMediaAssets.get(assetId);
+          if (!asset) {
+            try {
+              if (await db.isHealthy()) {
+                const res = await db.query('SELECT * FROM media_assets WHERE id = $1 LIMIT 1;', [assetId]);
+                if (res.rows.length > 0) asset = res.rows[0];
+              }
+            } catch {}
+          }
+
+          if (!asset || asset.status === 'DELETED' || asset.deletedAt != null || asset.deleted_at != null) {
+            throw new ValidationError(
+              `Render snapshot validation failed: Referenced media asset '${assetId}' (clip: '${clip.name || clip.id}') is missing or has been deleted`
+            );
+          }
+
+          if (asset.status === 'FAILED' || asset.status === 'failed') {
+            throw new ValidationError(
+              `Render snapshot validation failed: Referenced media asset '${assetId}' is in failed status`
+            );
+          }
+
+          if (!sourceMediaMap[assetId]) {
+            sourceMediaMap[assetId] = {
+              assetId: asset.id || assetId,
+              name: asset.name || asset.originalFilename || 'Asset',
+              fileKey: asset.fileKey || asset.file_key || '',
+              mimeType: asset.mimeType || asset.mime_type || 'video/mp4',
+              fileSizeBytes: Number(asset.fileSizeBytes || asset.file_size_bytes || 0),
+              durationSeconds: asset.durationSeconds || asset.duration_seconds,
+              sha256: asset.checksumSha256 || asset.checksum_sha256,
+              status: asset.status || 'READY',
+            };
+          }
+        }
+      }
+    }
+
+    if (computedDuration <= 0) {
+      computedDuration = maxClipEnd;
+    }
+
+    if (computedDuration <= 0 || totalClipCount === 0) {
+      throw new ValidationError('Cannot render empty project timeline with zero duration');
+    }
+
+    // 4. Normalize tracks and clips to immutable render state
+    const normalizedTracks = rawTracks.map((t: any) => ({
+      id: t.id,
+      type: t.type,
+      name: t.name || 'Track',
+      muted: Boolean(t.muted || t.isMuted),
+      locked: Boolean(t.locked || t.isLocked),
+      clips: (t.clips || []).map((c: any) => {
+        const dur = c.duration || 1;
+        const st = c.start || 0;
+        const srcSt = c.sourceStart || 0;
+
+        return {
+          id: c.id,
+          name: c.name || 'Clip',
+          mediaAssetId: c.mediaAssetId || c.assetId,
+          assetId: c.mediaAssetId || c.assetId,
+          start: st,
+          duration: dur,
+          sourceStart: srcSt,
+          speed: c.speed || 1.0,
+          volume: c.volume ?? 1.0,
+          trims: {
+            inPointSeconds: srcSt,
+            outPointSeconds: srcSt + dur,
+            sourceDurationSeconds: dur,
+          },
+          transform: {
+            scaleX: c.transform?.scaleX ?? 1.0,
+            scaleY: c.transform?.scaleY ?? 1.0,
+            positionX: c.transform?.positionX ?? 0,
+            positionY: c.transform?.positionY ?? 0,
+            rotationDegrees: c.transform?.rotationDegrees ?? 0,
+            opacity: c.transform?.opacity ?? 1.0,
+            anchorX: c.transform?.anchorX ?? 0.5,
+            anchorY: c.transform?.anchorY ?? 0.5,
+          },
+          keyframes: Array.isArray(c.keyframes) ? c.keyframes : [],
+          effects: Array.isArray(c.effects) ? c.effects : [],
+          transitions: c.transitions || {},
+          masks: Array.isArray(c.masks) ? c.masks : [],
+          chroma: c.chroma || { enabled: false },
+          audio: {
+            volume: c.audio?.volume ?? c.volume ?? 1.0,
+            gainDb: c.audio?.gainDb ?? 0,
+            pan: c.audio?.pan ?? 0,
+            fadeInMs: c.audio?.fadeInMs ?? 0,
+            fadeOutMs: c.audio?.fadeOutMs ?? 0,
+            pitchShift: c.audio?.pitchShift ?? 0,
+            equalizer: c.audio?.equalizer,
+          },
+          text: c.text
+            ? {
+                content: typeof c.text === 'object' ? (c.text.content || '') : String(c.text),
+                fontFamily: c.text.fontFamily || 'Inter',
+                fontSize: c.text.fontSize || 32,
+                fontWeight: c.text.fontWeight || 'normal',
+                fontStyle: c.text.fontStyle || 'normal',
+                color: c.text.color || '#FFFFFF',
+                backgroundColor: c.text.backgroundColor,
+                outlineColor: c.text.outlineColor,
+                outlineWidth: c.text.outlineWidth,
+                shadowColor: c.text.shadowColor,
+                alignment: c.text.alignment || 'center',
+                letterSpacing: c.text.letterSpacing,
+                lineHeight: c.text.lineHeight,
+                position: c.text.position || { x: 0, y: 0 },
+              }
+            : undefined,
+          captions: Array.isArray(c.captions) ? c.captions : [],
+        };
+      }),
+    }));
+
+    // 5. Assemble data payload for cryptographic hashing
+    const stateToHash = {
+      snapshotVersion: 1,
+      projectId,
+      projectVersion: targetVersion,
+      projectTitle: project.title,
+      canvas: {
+        resolutionWidth,
+        resolutionHeight,
+        framerate,
+        aspectRatio,
+        colorSpace,
+        backgroundColor,
+      },
+      timeline: {
+        duration: computedDuration,
+        framerate,
+        tracks: normalizedTracks,
+        markers: timeline?.markers || [],
+      },
+      sourceMedia: sourceMediaMap,
+      exportSettings: validatedSettings,
+    };
+
+    const canonicalJson = this.canonicalize(stateToHash);
+    const snapshotHash = crypto.createHash('sha256').update(canonicalJson).digest('hex');
+
+    const snapshot: RenderProjectSnapshot = {
+      snapshotVersion: 1,
+      snapshotHash,
+      projectId,
+      projectVersion: targetVersion,
+      projectVersionId: targetVersionId,
+      projectTitle: project.title,
+      createdAt: new Date().toISOString(),
+      canvas: {
+        resolutionWidth,
+        resolutionHeight,
+        framerate,
+        aspectRatio,
+        colorSpace,
+        backgroundColor,
+      },
+      timeline: {
+        duration: computedDuration,
+        framerate,
+        tracks: normalizedTracks,
+        markers: timeline?.markers || [],
+      },
+      sourceMedia: sourceMediaMap,
+      exportSettings: validatedSettings!,
+    };
+
+    return snapshot;
+  }
+
+  /**
+   * Create and enqueue a new cloud render job with an immutable project snapshot
    */
   async createRenderJob(
     userId: string,
@@ -195,10 +506,34 @@ export class RenderJobService {
     // 2. Validate render settings
     const validatedSettings = this.validateSettings(input.settings);
 
-    // 3. Calculate credit cost
+    // 3. Build & Validate Immutable Project Snapshot (including missing/deleted media detection)
+    const snapshot = await this.buildRenderSnapshot(
+      input.projectId,
+      userId,
+      input.versionNumber ?? input.version,
+      input.projectVersionId,
+      validatedSettings
+    );
+
+    // 4. Idempotency Check: Safely identify duplicate request with same snapshot hash + settings
+    const existingJob = this.findIdempotentJob(
+      userId,
+      input.projectId,
+      snapshot.snapshotHash,
+      validatedSettings
+    );
+    if (existingJob) {
+      logger.info(
+        { existingJobId: existingJob.id, snapshotHash: snapshot.snapshotHash, status: existingJob.status },
+        'Idempotent render job match: returning existing job without duplicate charge or queueing'
+      );
+      return existingJob;
+    }
+
+    // 5. Calculate credit cost
     const creditCost = this.calculateCreditCost(validatedSettings);
 
-    // 4. Reserve credits via CreditsService
+    // 6. Reserve credits via CreditsService
     const reservationId = uuidv4();
     try {
       await creditsService.deductCredits(
@@ -212,7 +547,7 @@ export class RenderJobService {
       throw err;
     }
 
-    // 5. Persist render_jobs row in DB
+    // 7. Persist render_jobs row in DB with immutable snapshot
     const id = uuidv4();
     const now = new Date().toISOString();
 
@@ -220,7 +555,8 @@ export class RenderJobService {
       id,
       userId,
       projectId: input.projectId,
-      projectVersionId: input.projectVersionId || null,
+      projectVersionId: snapshot.projectVersionId || input.projectVersionId || null,
+      projectVersion: snapshot.projectVersion,
       status: 'queued',
       settings: validatedSettings,
       progress: 0.0,
@@ -233,6 +569,8 @@ export class RenderJobService {
       maxAttempts: 3,
       creditReservationId: reservationId,
       creditCost,
+      snapshot,
+      snapshotHash: snapshot.snapshotHash,
       createdAt: now,
       startedAt: null,
       completedAt: null,
@@ -249,11 +587,12 @@ export class RenderJobService {
             `INSERT INTO render_jobs (
               id, user_id, project_id, project_version_id, status, settings,
               progress, stage, worker_metadata, attempts, max_attempts,
-              credit_reservation_id, credit_cost, created_at, updated_at
+              credit_reservation_id, credit_cost, snapshot_data, snapshot_hash,
+              snapshot_version, project_version, created_at, updated_at
             ) VALUES (
               $1, $2, $3, $4, 'queued', $5,
               0.00, 'queued', $6, 0, $7,
-              $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+              $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             );`,
             [
               jobData.id,
@@ -265,6 +604,10 @@ export class RenderJobService {
               jobData.maxAttempts,
               jobData.creditReservationId,
               jobData.creditCost,
+              JSON.stringify(jobData.snapshot),
+              jobData.snapshotHash,
+              jobData.snapshot?.snapshotVersion || 1,
+              jobData.projectVersion,
             ]
           );
         });
@@ -282,12 +625,15 @@ export class RenderJobService {
       throw new AppError(`Failed to persist render job: ${dbErr.message}`, 500, 'DATABASE_ERROR');
     }
 
-    // 6. Enqueue BullMQ render job AFTER successful DB commit
+    // 8. Enqueue BullMQ render job with immutable snapshot
     try {
       const queuePayload: RenderQueuePayload = {
         renderJobId: id,
         projectId: input.projectId,
-        projectVersionId: input.projectVersionId || null,
+        projectVersionId: jobData.projectVersionId,
+        projectVersion: jobData.projectVersion,
+        snapshotHash: jobData.snapshotHash,
+        snapshot: jobData.snapshot,
       };
 
       await jobQueue.add('render_jobs', queuePayload, {
@@ -296,11 +642,11 @@ export class RenderJobService {
       });
 
       logger.info(
-        { renderJobId: id, userId, projectId: input.projectId, creditCost },
-        'Cloud render job persisted and submitted to queue'
+        { renderJobId: id, userId, projectId: input.projectId, version: jobData.projectVersion, snapshotHash: jobData.snapshotHash, creditCost },
+        'Cloud render job persisted and submitted to queue with immutable snapshot'
       );
     } catch (queueErr: any) {
-      // 7. Compensation if queue submission fails
+      // 9. Compensation if queue submission fails
       logger.error({ id, userId, error: queueErr.message }, 'Queue submission failed, compensating render job');
       jobData.status = 'failed';
       jobData.errorCode = 'QUEUE_SUBMISSION_FAILED';
@@ -336,7 +682,7 @@ export class RenderJobService {
       throw new AppError('Failed to dispatch render job to processing queue', 503, 'QUEUE_ERROR');
     }
 
-    // 8. Emit RENDER_JOB_CREATED realtime event
+    // 10. Emit RENDER_JOB_CREATED realtime event
     realtimeService.notifyRenderJobCreated(jobData);
 
     return jobData;
@@ -362,6 +708,9 @@ export class RenderJobService {
             userId: row.user_id,
             projectId: row.project_id,
             projectVersionId: row.project_version_id,
+            projectVersion: row.project_version,
+            snapshot: row.snapshot_data ? (typeof row.snapshot_data === 'string' ? JSON.parse(row.snapshot_data) : row.snapshot_data) : (mockRenderJobs.get(id)?.snapshot),
+            snapshotHash: row.snapshot_hash || mockRenderJobs.get(id)?.snapshotHash,
             status: row.status,
             settings: typeof row.settings === 'string' ? JSON.parse(row.settings) : row.settings,
             progress: parseFloat(row.progress) || 0,
@@ -402,6 +751,38 @@ export class RenderJobService {
     }
 
     return job;
+  }
+
+  /**
+   * Request a fresh signed download URL for completed render job
+   */
+  async getDownloadUrl(
+    id: string,
+    userId: string,
+    expiresInSeconds = 3600,
+    userRole?: string
+  ): Promise<{ downloadUrl: string; expiresInSeconds: number; storageKey: string; sizeBytes?: number; format: string }> {
+    const job = await this.getRenderJob(id, userId, userRole);
+    if (job.status !== 'completed') {
+      throw new ValidationError(`Render job ${id} is not completed (current status: ${job.status})`);
+    }
+    if (!job.outputObject?.storageKey) {
+      throw new NotFoundError(`No output object found for render job ${id}`);
+    }
+
+    const downloadUrl = await storageService.getDownloadPresignedUrl(
+      job.outputObject.storageKey,
+      expiresInSeconds,
+      `${job.snapshot?.projectTitle || 'render_output'}.${job.settings.format}`
+    );
+
+    return {
+      downloadUrl,
+      expiresInSeconds,
+      storageKey: job.outputObject.storageKey,
+      sizeBytes: job.outputObject.sizeBytes,
+      format: job.settings.format,
+    };
   }
 
   /**
@@ -471,6 +852,8 @@ export class RenderJobService {
           userId: row.user_id,
           projectId: row.project_id,
           projectVersionId: row.project_version_id,
+          projectVersion: row.project_version,
+          snapshotHash: row.snapshot_hash || undefined,
           status: row.status,
           settings: typeof row.settings === 'string' ? JSON.parse(row.settings) : row.settings,
           progress: parseFloat(row.progress) || 0,
@@ -586,11 +969,11 @@ export class RenderJobService {
       }
 
       await jobQueue.cancelJob(id);
-      realtimeService.notifyRenderJobCancelled(job);
+      realtimeService.notifyRenderCancelled(job);
       return job;
     }
 
-    // If job is starting or running: transition to cancelling (Worker will abort FFmpeg process in Phase 4)
+    // If job is starting or running: transition to cancelling (Worker will abort FFmpeg process)
     if (job.status === 'starting' || job.status === 'running') {
       job.status = 'cancelling';
       job.stage = 'cancelling';
@@ -610,8 +993,49 @@ export class RenderJobService {
         }
       } catch {}
 
+      realtimeService.notifyRenderCancelling(job);
+
+      // Abort active FFmpeg process in renderWorker
+      try {
+        const { renderWorker } = await import('./render-worker.service.js');
+        const handledByWorker = await renderWorker.cancelActiveRender(id);
+        if (!handledByWorker) {
+          // If not handled by an active in-memory session, mark cancelled directly
+          job.status = 'cancelled';
+          job.stage = 'cancelled';
+          job.cancelledAt = new Date().toISOString();
+          mockRenderJobs.set(id, job);
+
+          try {
+            if (await db.isHealthy()) {
+              await db.query(
+                `UPDATE render_jobs
+                 SET status = 'cancelled',
+                     stage = 'cancelled',
+                     cancelled_at = CURRENT_TIMESTAMP,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $1;`,
+                [id]
+              );
+            }
+          } catch {}
+
+          if (job.creditCost > 0 && job.creditReservationId) {
+            await creditsService.grantCredits(
+              job.userId,
+              job.creditCost,
+              'job_refund',
+              `Refund for cancelled render job ${job.id}`
+            );
+          }
+
+          realtimeService.notifyRenderCancelled(job);
+        }
+      } catch (workerErr: any) {
+        logger.warn({ id, err: workerErr.message }, 'Could not notify renderWorker of cancellation');
+      }
+
       await jobQueue.cancelJob(id);
-      realtimeService.notifyRenderJobCancelled(job);
       return job;
     }
 
@@ -624,8 +1048,8 @@ export class RenderJobService {
   async retryRenderJob(id: string, userId: string, userRole?: string): Promise<RenderJob> {
     const job = await this.getRenderJob(id, userId, userRole);
 
-    if (job.status !== 'failed') {
-      throw new ValidationError(`Cannot retry a render job with status: ${job.status}. Only failed jobs may be retried.`);
+    if (job.status !== 'failed' && job.status !== 'cancelled') {
+      throw new ValidationError(`Cannot retry a render job with status: ${job.status}. Only failed or cancelled jobs may be retried.`);
     }
 
     if (job.attempts >= job.maxAttempts) {
@@ -674,7 +1098,7 @@ export class RenderJobService {
                attempts = attempts + 1,
                credit_reservation_id = $1,
                updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2 AND status = 'failed' AND attempts < max_attempts;`,
+           WHERE id = $2 AND status IN ('failed', 'cancelled') AND attempts < max_attempts;`,
           [retryReservationId, id]
         );
       }

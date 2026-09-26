@@ -4,7 +4,7 @@ import { Redis } from 'ioredis';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from '../../config/env.js';
 import { logger } from '../../core/logger.js';
-import { IJobQueue, Job, JobOptions, JobProcessor, JobStatus, MemoryJobQueue } from './index.js';
+import { IJobQueue, Job, JobOptions, JobProcessor, JobStatus, MemoryJobQueue, QueueHealthResult } from './index.js';
 
 export class BullMQJobQueue extends EventEmitter implements IJobQueue {
   private redisConnection: Redis | null = null;
@@ -17,34 +17,67 @@ export class BullMQJobQueue extends EventEmitter implements IJobQueue {
   constructor() {
     super();
 
-    if (env.NODE_ENV === 'test' || env.REDIS_ENABLE_FALLBACK) {
-      logger.info('Using in-memory queue fallback for tests / local development');
+    if (env.NODE_ENV === 'test') {
+      logger.info('Using in-memory queue fallback for tests');
       this.activateFallback();
       return;
     }
 
-    try {
-      this.redisConnection = new Redis(env.REDIS_URL, {
-        maxRetriesPerRequest: null, // Required by BullMQ
-        retryStrategy: (times) => {
-          if (times > 3) {
-            logger.warn('Redis connection failed, activating in-memory queue fallback');
-            this.activateFallback();
-            return null;
-          }
-          return Math.min(times * 200, 1000);
-        },
-      });
+    if (env.NODE_ENV === 'production') {
+      try {
+        const isTls = env.REDIS_TLS || env.REDIS_URL.startsWith('rediss://');
+        this.redisConnection = new Redis(env.REDIS_URL, {
+          maxRetriesPerRequest: null,
+          connectTimeout: env.REDIS_CONNECT_TIMEOUT_MS,
+          tls: isTls ? {} : undefined,
+          retryStrategy: (times) => {
+            if (times > env.REDIS_MAX_RETRIES) {
+              logger.error({ times }, 'BullMQ Redis connection attempts exhausted in production');
+              return null;
+            }
+            return Math.min(times * 150, 3000);
+          },
+        });
 
-      this.redisConnection.on('error', (err) => {
-        logger.error({ err }, 'Redis error in BullMQ connection');
-        if (!this.fallbackActive) {
-          this.activateFallback();
-        }
+        this.redisConnection.on('error', (err) => {
+          logger.error({ err: err.message }, 'FATAL: Redis error in BullMQ production queue');
+        });
+      } catch (err) {
+        logger.fatal({ err }, 'FATAL: Failed to initialize BullMQ Redis connection in production');
+        throw new Error(`Production BullMQ initialization failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // Development mode
+    if (env.ALLOW_DEV_FALLBACKS || env.REDIS_ENABLE_FALLBACK) {
+      try {
+        this.redisConnection = new Redis(env.REDIS_URL, {
+          maxRetriesPerRequest: null,
+          retryStrategy: (times) => {
+            if (times > 3) {
+              logger.warn('Redis connection failed, activating in-memory queue fallback');
+              this.activateFallback();
+              return null;
+            }
+            return Math.min(times * 200, 1000);
+          },
+        });
+
+        this.redisConnection.on('error', (err) => {
+          logger.warn({ err: err.message }, 'Redis error in BullMQ connection, switching to fallback');
+          if (!this.fallbackActive) {
+            this.activateFallback();
+          }
+        });
+      } catch (err) {
+        logger.warn({ err }, 'Could not initialize BullMQ Redis connection, using in-memory queue');
+        this.activateFallback();
+      }
+    } else {
+      this.redisConnection = new Redis(env.REDIS_URL, {
+        maxRetriesPerRequest: null,
       });
-    } catch (err) {
-      logger.warn({ err }, 'Could not initialize BullMQ Redis connection, using in-memory queue');
-      this.activateFallback();
     }
   }
 
@@ -305,6 +338,50 @@ export class BullMQJobQueue extends EventEmitter implements IJobQueue {
     this.emit(`progress:${id}`, job);
   }
 
+  async isHealthy(): Promise<boolean> {
+    const details = await this.getHealthDetails();
+    return details.healthy;
+  }
+
+  async getHealthDetails(): Promise<QueueHealthResult> {
+    if (this.fallbackActive) {
+      return {
+        healthy: true,
+        driver: 'memory',
+        activeWorkers: this.workers.size,
+        totalQueues: this.queues.size,
+      };
+    }
+
+    if (!this.redisConnection) {
+      return {
+        healthy: false,
+        driver: 'bullmq',
+        activeWorkers: this.workers.size,
+        totalQueues: this.queues.size,
+        error: 'Redis connection not initialized',
+      };
+    }
+
+    try {
+      const pong = await this.redisConnection.ping();
+      return {
+        healthy: pong === 'PONG',
+        driver: 'bullmq',
+        activeWorkers: this.workers.size,
+        totalQueues: this.queues.size,
+      };
+    } catch (err) {
+      return {
+        healthy: false,
+        driver: 'bullmq',
+        activeWorkers: this.workers.size,
+        totalQueues: this.queues.size,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   async close(): Promise<void> {
     for (const worker of this.workers.values()) {
       await worker.close();
@@ -317,3 +394,4 @@ export class BullMQJobQueue extends EventEmitter implements IJobQueue {
     }
   }
 }
+

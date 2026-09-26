@@ -325,6 +325,67 @@ export class ProjectsService {
     return enrichProjectForFlutter(project);
   }
 
+  /**
+   * Retrieves a specific version record for a project
+   */
+  async getProjectVersion(
+    projectId: string,
+    versionNumber: number,
+    userId: string
+  ): Promise<ProjectVersionRecord | null> {
+    const project = await this.getById(projectId, userId);
+    if (!project) return null;
+
+    // Check in-memory version history
+    const history = mockVersionHistory.get(projectId) || [];
+    const foundRecord = history.find((v) => v.versionNumber === versionNumber);
+    if (foundRecord) {
+      return foundRecord;
+    }
+
+    // If requesting current active version, construct version record from current state
+    if (project.version === versionNumber) {
+      return {
+        id: project.versions?.recentVersions?.[0]?.id || uuidv4(),
+        projectId,
+        versionNumber,
+        changeSummary: 'Current project state',
+        isAutoSave: false,
+        snapshotData: {
+          canvas: project.canvas,
+          timeline: project.timeline,
+          assets: project.assets,
+          settings: project.settings,
+        },
+        createdAt: project.updatedAt,
+      };
+    }
+
+    // Check PostgreSQL project_versions table if DB is healthy
+    try {
+      if (await db.isHealthy()) {
+        const res = await db.query(
+          `SELECT * FROM project_versions WHERE project_id = $1 AND version_number = $2 LIMIT 1;`,
+          [projectId, versionNumber]
+        );
+        if (res.rows.length > 0) {
+          const row: any = res.rows[0];
+          return {
+            id: row.id,
+            projectId: row.project_id,
+            versionNumber: row.version_number,
+            changeSummary: row.change_summary || '',
+            isAutoSave: row.is_auto_save ?? false,
+            snapshotData: typeof row.snapshot_data === 'string' ? JSON.parse(row.snapshot_data) : row.snapshot_data,
+            createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+          };
+        }
+      }
+    } catch {}
+
+    return null;
+  }
+
   // ============================================================================
   // UPDATE (WITH OPTIMISTIC CONCURRENCY CHECK)
   // ============================================================================

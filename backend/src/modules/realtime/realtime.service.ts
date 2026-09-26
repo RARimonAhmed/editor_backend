@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
-import { RealtimeEventType, RealtimeEnvelope, RealtimeSession } from './realtime.types.js';
+import { RealtimeEventType, RealtimeEnvelope, RealtimeSession, RenderRealtimePayload } from './realtime.types.js';
 import { mockAIJobs } from '../ai/jobs/ai-job.service.js';
 import { mockJobs } from '../jobs/jobs.service.js';
 import { mockMediaAssets } from '../media/media.service.js';
@@ -69,6 +69,13 @@ export class RealtimeService {
       if (renderJob) {
         return renderJob.userId === userId;
       }
+      try {
+        const { mockRenderJobs } = await import('../jobs/render-job.service.js');
+        const rJob = mockRenderJobs.get(jobId);
+        if (rJob) {
+          return rJob.userId === userId;
+        }
+      } catch {}
 
       // Check Media assets / jobs
       const mediaAsset = mockMediaAssets.get(jobId);
@@ -351,28 +358,163 @@ export class RealtimeService {
     if (userId) this.publish('export_failed', `user:${userId}`, payload);
   }
 
+  // ============================================================================
+  // COMMAND 24: RENDER EVENT CONTRACT (render:*)
+  // ============================================================================
+
+  private buildRenderContractPayload(
+    job: { id?: string; jobId?: string; userId: string; projectId: string; status?: string; stage?: string; progress?: number; [key: string]: any },
+    overrides: {
+      status?: string;
+      stage?: string;
+      progress?: number;
+      errorCode?: string;
+      errorMessage?: string;
+      outputObject?: any;
+    } = {}
+  ): RenderRealtimePayload {
+    const jobId = job.id || job.jobId || '';
+    const status = overrides.status || job.status || 'queued';
+    const stage = overrides.stage || job.stage || 'queued';
+    const timestamp = new Date().toISOString();
+
+    const payload: RenderRealtimePayload = {
+      jobId,
+      projectId: job.projectId,
+      userId: job.userId,
+      status,
+      stage,
+      timestamp,
+    };
+
+    if (overrides.progress !== undefined) {
+      if (overrides.progress !== null) {
+        payload.progress = overrides.progress;
+      }
+    } else if (overrides.stage === undefined && job.progress !== undefined && status !== 'queued' && stage !== 'queued') {
+      payload.progress = job.progress;
+    }
+
+    if (overrides.errorCode || job.errorCode) {
+      payload.errorCode = overrides.errorCode || job.errorCode;
+    }
+
+    if (overrides.errorMessage || job.errorMessage) {
+      payload.errorMessage = overrides.errorMessage || job.errorMessage;
+    }
+
+    if (overrides.outputObject || job.outputObject) {
+      payload.outputObject = overrides.outputObject || job.outputObject;
+    }
+
+    return payload;
+  }
+
+  private publishRenderContract(eventType: RealtimeEventType, payload: RenderRealtimePayload) {
+    if (payload.jobId) this.publish(eventType, `job:${payload.jobId}`, payload);
+    if (payload.userId) this.publish(eventType, `user:${payload.userId}`, payload);
+    if (payload.projectId) this.publish(eventType, `project:${payload.projectId}`, payload);
+    this.notifyAdminJobEvent(eventType, payload, 'admin:render');
+  }
+
+  notifyRenderQueued(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
+    const payload = this.buildRenderContractPayload(job, { status: 'queued', stage: 'queued', progress: null as any });
+    this.publishRenderContract('render:queued', payload);
+    // Legacy support
+    this.publish('render_job_created', `job:${job.id}`, { ...job, status: 'queued', stage: 'queued' });
+    if (job.userId) this.publish('render_job_created', `user:${job.userId}`, { ...job, status: 'queued' });
+    if (job.projectId) this.publish('render_job_created', `project:${job.projectId}`, { ...job, status: 'queued' });
+  }
+
+  notifyRenderStarted(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
+    const payload = this.buildRenderContractPayload(job, { status: 'running', stage: job.stage || 'starting', progress: null as any });
+    this.publishRenderContract('render:started', payload);
+    // Legacy support
+    this.publish('render_job_started', `job:${job.id}`, { ...job, status: 'running' });
+    if (job.userId) this.publish('render_job_started', `user:${job.userId}`, { ...job, status: 'running' });
+    if (job.projectId) this.publish('render_job_started', `project:${job.projectId}`, { ...job, status: 'running' });
+  }
+
+  notifyRenderStage(job: { id: string; userId: string; projectId: string; [key: string]: any }, stage: string) {
+    const payload = this.buildRenderContractPayload(job, { stage, progress: null as any });
+    this.publishRenderContract('render:stage', payload);
+  }
+
+  notifyRenderProgress(job: { id: string; userId: string; projectId: string; [key: string]: any }, progress: number, stage: string = 'rendering') {
+    const payload = this.buildRenderContractPayload(job, { status: 'running', stage, progress });
+    this.publishRenderContract('render:progress', payload);
+    // Legacy support
+    this.publish('render_job_progress', `job:${job.id}`, { ...job, progress, stage });
+    if (job.userId) this.publish('render_job_progress', `user:${job.userId}`, { ...job, progress, stage });
+    if (job.projectId) this.publish('render_job_progress', `project:${job.projectId}`, { ...job, progress, stage });
+  }
+
+  notifyRenderCancelling(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
+    const payload = this.buildRenderContractPayload(job, { status: 'cancelling', stage: 'cancelling' });
+    this.publishRenderContract('render:cancelling', payload);
+  }
+
+  notifyRenderCancelled(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
+    const payload = this.buildRenderContractPayload(job, { status: 'cancelled', stage: 'cancelled' });
+    this.publishRenderContract('render:cancelled', payload);
+    // Legacy support
+    this.publish('render_job_cancelled', `job:${job.id}`, { ...job, status: 'cancelled' });
+    if (job.userId) this.publish('render_job_cancelled', `user:${job.userId}`, { ...job, status: 'cancelled' });
+    if (job.projectId) this.publish('render_job_cancelled', `project:${job.projectId}`, { ...job, status: 'cancelled' });
+  }
+
+  notifyRenderCompleted(job: { id: string; userId: string; projectId: string; [key: string]: any }, output: any) {
+    const payload = this.buildRenderContractPayload(job, {
+      status: 'completed',
+      stage: 'completed',
+      progress: 100,
+      outputObject: output,
+    });
+    this.publishRenderContract('render:completed', payload);
+    // Legacy support
+    this.publish('render_job_completed', `job:${job.id}`, { ...job, status: 'completed', progress: 100, outputObject: output });
+    if (job.userId) this.publish('render_job_completed', `user:${job.userId}`, { ...job, status: 'completed' });
+    if (job.projectId) this.publish('render_job_completed', `project:${job.projectId}`, { ...job, status: 'completed' });
+  }
+
+  notifyRenderFailed(
+    job: { id: string; userId: string; projectId: string; [key: string]: any },
+    error: string,
+    errorCode: string = 'RENDER_EXECUTION_FAILED'
+  ) {
+    const safeError = error.replace(/([a-zA-Z0-9_\-]{20,})/g, '[REDACTED]');
+    const payload = this.buildRenderContractPayload(job, {
+      status: 'failed',
+      stage: 'failed',
+      errorCode,
+      errorMessage: safeError,
+    });
+    this.publishRenderContract('render:failed', payload);
+    // Legacy support
+    this.publish('render_job_failed', `job:${job.id}`, { ...job, status: 'failed', error: safeError });
+    if (job.userId) this.publish('render_job_failed', `user:${job.userId}`, { ...job, status: 'failed' });
+    if (job.projectId) this.publish('render_job_failed', `project:${job.projectId}`, { ...job, status: 'failed' });
+  }
+
+  // Backwards compatibility alias wrappers
   notifyRenderJobCreated(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
-    const payload = { ...job };
-    this.publish('render_job_created', `job:${job.id}`, payload);
-    if (job.userId) this.publish('render_job_created', `user:${job.userId}`, payload);
-    if (job.projectId) this.publish('render_job_created', `project:${job.projectId}`, payload);
-    this.notifyAdminJobEvent('render_job_created', payload, 'admin:render');
+    this.notifyRenderQueued(job);
   }
 
   notifyRenderJobCancelled(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
-    const payload = { ...job, status: 'cancelled' };
-    this.publish('render_job_cancelled', `job:${job.id}`, payload);
-    if (job.userId) this.publish('render_job_cancelled', `user:${job.userId}`, payload);
-    if (job.projectId) this.publish('render_job_cancelled', `project:${job.projectId}`, payload);
-    this.notifyAdminJobEvent('render_job_cancelled', payload, 'admin:render');
+    this.notifyRenderCancelled(job);
   }
 
-  notifyRenderJobFailed(job: { id: string; userId: string; projectId: string; [key: string]: any }, error: string) {
-    const payload = { ...job, status: 'failed', error };
-    this.publish('render_job_failed', `job:${job.id}`, payload);
-    if (job.userId) this.publish('render_job_failed', `user:${job.userId}`, payload);
-    if (job.projectId) this.publish('render_job_failed', `project:${job.projectId}`, payload);
-    this.notifyAdminJobEvent('render_job_failed', payload, 'admin:render');
+  notifyRenderJobFailed(job: { id: string; userId: string; projectId: string; [key: string]: any }, error: string, errorCode?: string) {
+    this.notifyRenderFailed(job, error, errorCode);
+  }
+
+  notifyRenderJobProgress(job: { id: string; userId: string; projectId: string; [key: string]: any }, progress: number, stage: string) {
+    this.notifyRenderProgress(job, progress, stage);
+  }
+
+  notifyRenderJobCompleted(job: { id: string; userId: string; projectId: string; [key: string]: any }, output: any) {
+    this.notifyRenderCompleted(job, output);
   }
 
   notifyProjectShared(projectId: string, invitedUserId: string, role: string, inviterName: string) {

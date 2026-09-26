@@ -32,6 +32,8 @@ const renderSettingsSchema = z.object({
 const createRenderJobSchema = z.object({
   projectId: z.string().uuid('Valid project UUID is required'),
   projectVersionId: z.string().uuid().optional(),
+  versionNumber: z.number().int().positive().optional(),
+  version: z.number().int().positive().optional(),
   settings: renderSettingsSchema.optional(),
 
   // Also support flat top-level parameters for seamless client compatibility
@@ -102,6 +104,7 @@ export class RenderJobController {
       {
         projectId: body.projectId,
         projectVersionId: body.projectVersionId,
+        versionNumber: body.versionNumber || body.version,
         settings: mergedSettings,
       },
       userRole
@@ -126,6 +129,25 @@ export class RenderJobController {
     const job = await renderJobService.getRenderJob(request.params.id, userId, userRole);
 
     return reply.status(200).send(createSuccessResponse(job));
+  }
+
+  /**
+   * GET /api/v1/jobs/render/:id/download-url
+   */
+  async getDownloadUrl(
+    request: FastifyRequest<{ Params: { id: string }; Querystring: { expiresIn?: number } }>,
+    reply: FastifyReply
+  ) {
+    if (!request.user?.userId) {
+      throw new AuthenticationError('User authentication required');
+    }
+
+    const userId = request.user.userId;
+    const userRole = request.user.role;
+    const expiresIn = request.query.expiresIn ? Number(request.query.expiresIn) : 3600;
+    const result = await renderJobService.getDownloadUrl(request.params.id, userId, expiresIn, userRole);
+
+    return reply.status(200).send(createSuccessResponse(result));
   }
 
   /**

@@ -75,6 +75,32 @@ export async function jobsRoutes(fastify: FastifyInstance) {
     renderJobController.retryRenderJob.bind(renderJobController)
   );
 
+  // 6. Request Signed Download URL: GET /api/v1/jobs/render/:id/download-url
+  fastify.get(
+    '/render/:id/download-url',
+    {
+      schema: {
+        description: 'Request a signed presigned download URL for a completed render output',
+        tags: ['Render Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    renderJobController.getDownloadUrl.bind(renderJobController)
+  );
+
+  // 7. Download Alias: GET /api/v1/jobs/render/:id/download
+  fastify.get(
+    '/render/:id/download',
+    {
+      schema: {
+        description: 'Alias to request signed download URL for completed render output',
+        tags: ['Render Jobs'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    renderJobController.getDownloadUrl.bind(renderJobController)
+  );
+
   // ============================================================================
   // BACKWARDS COMPATIBILITY ROUTES (/api/v1/jobs/:id)
   // ============================================================================
