@@ -3,6 +3,7 @@ import { adminService } from './admin.service.js';
 import { authService } from '../auth/auth.service.js';
 import { createSuccessResponse } from '../../core/response.js';
 import { AuthenticationError, ForbiddenError } from '../../core/errors.js';
+import { copilotStore } from '../ai/copilot/copilot.store.js';
 
 export class AdminController {
   async listUsers(request: FastifyRequest, reply: FastifyReply) {
@@ -162,6 +163,11 @@ export class AdminController {
     const { id } = request.params as { id: string };
     const details = await adminService.getAIJobDetails(id);
     return reply.status(200).send(createSuccessResponse(details));
+  }
+
+  async getCopilotMetrics(_request: FastifyRequest, reply: FastifyReply) {
+    const metrics = await copilotStore.getMetrics();
+    return reply.status(200).send(createSuccessResponse(metrics));
   }
 
   async listRenderJobs(request: FastifyRequest, reply: FastifyReply) {

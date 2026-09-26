@@ -6,6 +6,7 @@ import { editingAnalysisController } from './editing-analysis/editing-analysis.c
 import { orchestrationController } from './orchestration/orchestration.controller.js';
 import { aiGenerationController } from './generation/ai-generation.controller.js';
 import { editorCommandController } from './commands/editor-command.controller.js';
+import { copilotController } from './copilot/copilot.controller.js';
 import { authenticate, optionalAuthenticate } from '../auth/auth.middleware.js';
 
 
@@ -594,6 +595,60 @@ export async function aiRoutes(fastify: FastifyInstance) {
       },
     },
     editorCommandController.executeCommands.bind(editorCommandController)
+  );
+
+  // --------------------------------------------------------------------------
+  // AI COPILOT REALTIME PIPELINE (DAY 4 — COMMAND 18)
+  // --------------------------------------------------------------------------
+  fastify.post(
+    '/copilot',
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: 'Generate structured EditorCommandPlan from natural language prompt',
+        tags: ['AI Copilot'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    copilotController.generatePlan.bind(copilotController)
+  );
+
+  fastify.get(
+    '/copilot/:planId',
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: 'Retrieve stored AI Copilot EditorCommandPlan by ID',
+        tags: ['AI Copilot'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    copilotController.getPlan.bind(copilotController)
+  );
+
+  fastify.post(
+    '/copilot/:planId/apply',
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: 'Safely apply AI Copilot command plan to project timeline with version safety check',
+        tags: ['AI Copilot'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    copilotController.applyPlan.bind(copilotController)
+  );
+
+  fastify.get(
+    '/copilot/metrics',
+    {
+      schema: {
+        description: 'Get telemetry metrics for AI Copilot plans and commands',
+        tags: ['AI Copilot'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    copilotController.getMetrics.bind(copilotController)
   );
 }
 

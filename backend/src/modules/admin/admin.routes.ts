@@ -77,6 +77,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     // AI Job Intelligence Center
     protectedAdmin.get('/ai/jobs', adminController.listAIJobs.bind(adminController));
     protectedAdmin.get('/ai/jobs/:id', adminController.getAIJobDetails.bind(adminController));
+    protectedAdmin.get('/ai/copilot/metrics', adminController.getCopilotMetrics.bind(adminController));
 
     // Cloud Render & Export Monitoring Center
     protectedAdmin.get('/render/jobs', adminController.listRenderJobs.bind(adminController));

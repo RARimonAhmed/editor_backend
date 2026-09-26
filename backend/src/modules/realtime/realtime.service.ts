@@ -79,14 +79,16 @@ export class RealtimeService {
       // Check Database if healthy
       try {
         if (await db.isHealthy()) {
-          const [aiRes, jobRes, mediaRes] = await Promise.all([
+          const [aiRes, jobRes, mediaRes, renderRes] = await Promise.all([
             db.query('SELECT user_id FROM ai_jobs WHERE id = $1 LIMIT 1;', [jobId]),
             db.query('SELECT user_id FROM jobs WHERE id = $1 LIMIT 1;', [jobId]),
             db.query('SELECT user_id FROM media_assets WHERE id = $1 LIMIT 1;', [jobId]),
+            db.query('SELECT user_id FROM render_jobs WHERE id = $1 LIMIT 1;', [jobId]),
           ]);
           if (aiRes.rows[0]?.user_id === userId) return true;
           if (jobRes.rows[0]?.user_id === userId) return true;
           if (mediaRes.rows[0]?.user_id === userId) return true;
+          if (renderRes.rows[0]?.user_id === userId) return true;
         }
       } catch {}
 
@@ -347,6 +349,30 @@ export class RealtimeService {
     this.publish('export_failed', `job:${exportId}`, payload);
     this.publish('export_failed', `project:${projectId}`, payload);
     if (userId) this.publish('export_failed', `user:${userId}`, payload);
+  }
+
+  notifyRenderJobCreated(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
+    const payload = { ...job };
+    this.publish('render_job_created', `job:${job.id}`, payload);
+    if (job.userId) this.publish('render_job_created', `user:${job.userId}`, payload);
+    if (job.projectId) this.publish('render_job_created', `project:${job.projectId}`, payload);
+    this.notifyAdminJobEvent('render_job_created', payload, 'admin:render');
+  }
+
+  notifyRenderJobCancelled(job: { id: string; userId: string; projectId: string; [key: string]: any }) {
+    const payload = { ...job, status: 'cancelled' };
+    this.publish('render_job_cancelled', `job:${job.id}`, payload);
+    if (job.userId) this.publish('render_job_cancelled', `user:${job.userId}`, payload);
+    if (job.projectId) this.publish('render_job_cancelled', `project:${job.projectId}`, payload);
+    this.notifyAdminJobEvent('render_job_cancelled', payload, 'admin:render');
+  }
+
+  notifyRenderJobFailed(job: { id: string; userId: string; projectId: string; [key: string]: any }, error: string) {
+    const payload = { ...job, status: 'failed', error };
+    this.publish('render_job_failed', `job:${job.id}`, payload);
+    if (job.userId) this.publish('render_job_failed', `user:${job.userId}`, payload);
+    if (job.projectId) this.publish('render_job_failed', `project:${job.projectId}`, payload);
+    this.notifyAdminJobEvent('render_job_failed', payload, 'admin:render');
   }
 
   notifyProjectShared(projectId: string, invitedUserId: string, role: string, inviterName: string) {

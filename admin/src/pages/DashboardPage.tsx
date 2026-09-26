@@ -138,8 +138,22 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
         />
         <StatCard
           title="Subscriptions"
-          value={stats ? stats.activeSubscriptions.toLocaleString() : '-'}
-          subtitle="Active recurring tiers"
+          value={
+            stats
+              ? typeof stats.activeSubscriptions === 'object' && stats.activeSubscriptions !== null
+                ? (
+                    (stats.activeSubscriptions as any).free +
+                    (stats.activeSubscriptions as any).pro +
+                    (stats.activeSubscriptions as any).studio
+                  ).toLocaleString()
+                : Number(stats.activeSubscriptions).toLocaleString()
+              : '-'
+          }
+          subtitle={
+            stats && typeof stats.activeSubscriptions === 'object'
+              ? `${(stats.activeSubscriptions as any).pro || 0} Pro • ${(stats.activeSubscriptions as any).studio || 0} Studio`
+              : 'Active recurring tiers'
+          }
           icon={<CreditCard size={20} />}
         />
       </div>

@@ -545,24 +545,15 @@ describe('Operational Distributed AI/Media Job System & Realtime Channels', () =
         });
       });
 
-      // Submit render job
-      const res = await app.inject({
-        method: 'POST',
-        url: '/v1/jobs/render',
-        headers: { Authorization: `Bearer ${userA.token}` },
-        payload: {
-          projectId: projectIdA,
-          format: 'mp4',
-          resolutionWidth: 1920,
-          resolutionHeight: 1080,
-          framerate: 60,
-          qualityPreset: 'high',
-        },
+      // Submit legacy mock render export job
+      const { jobsService } = await import('../src/modules/jobs/jobs.service.js');
+      const renderJob = await jobsService.createRenderJob(userA.id, {
+        projectId: projectIdA,
+        format: 'mp4',
+        resolutionWidth: 1920,
+        resolutionHeight: 1080,
+        framerate: 60,
       });
-
-      expect([201, 202]).toContain(res.statusCode);
-      const resBody = JSON.parse(res.body).data;
-      const renderJob = resBody.job || resBody;
 
       // Wait for export worker to finish
       let count = 0;

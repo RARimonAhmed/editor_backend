@@ -18,23 +18,33 @@ import { SettingsPage } from './pages/SettingsPage';
 
 export const App: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const [currentPath, setCurrentPath] = useState<string>(() => {
+  
+  const getPath = () => {
     const hash = window.location.hash.replace(/^#/, '');
-    return hash || '/dashboard';
-  });
+    if (hash) return hash.startsWith('/') ? hash : `/${hash}`;
+    const pathname = window.location.pathname.replace(/^\/admin/, '');
+    const clean = pathname.replace(/\/$/, '');
+    return clean.startsWith('/') ? clean : `/${clean || 'dashboard'}`;
+  };
+
+  const [currentPath, setCurrentPath] = useState<string>(getPath);
 
   useEffect(() => {
-    const onHashChange = () => {
-      const hash = window.location.hash.replace(/^#/, '');
-      setCurrentPath(hash || '/dashboard');
+    const onLocationChange = () => {
+      setCurrentPath(getPath());
     };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    window.addEventListener('hashchange', onLocationChange);
+    window.addEventListener('popstate', onLocationChange);
+    return () => {
+      window.removeEventListener('hashchange', onLocationChange);
+      window.removeEventListener('popstate', onLocationChange);
+    };
   }, []);
 
   const navigate = (path: string) => {
-    window.location.hash = `#${path}`;
-    setCurrentPath(path);
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    window.location.hash = `#${cleanPath}`;
+    setCurrentPath(cleanPath);
   };
 
   if (isLoading) {
@@ -68,6 +78,7 @@ export const App: React.FC = () => {
   const renderContent = () => {
     switch (currentPath) {
       case '/':
+      case '/login':
       case '/dashboard':
         return <DashboardPage onNavigate={navigate} />;
       case '/users':

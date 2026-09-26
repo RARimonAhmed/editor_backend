@@ -35,7 +35,7 @@ export interface AdminStatsOverview {
   completedRenderJobs: number;
   failedRenderJobs: number;
   totalCreditsConsumed: number;
-  activeSubscriptions: number;
+  activeSubscriptions: number | { free: number; pro: number; studio: number };
   recentActivity: Array<{
     id: string;
     type: string;
