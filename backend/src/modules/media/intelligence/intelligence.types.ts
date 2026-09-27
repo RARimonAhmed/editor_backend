@@ -131,6 +131,7 @@ export interface SemanticSearchQuery {
   createdBefore?: string;
   category?: string;
   projectId?: string;
+  minScore?: number;
   limit?: number;
   offset?: number;
 }

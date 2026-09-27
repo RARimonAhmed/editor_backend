@@ -36,6 +36,20 @@ import { env } from '../../config/env.js';
 import { logger } from '../../core/logger.js';
 import { AppError, ValidationError } from '../../core/errors.js';
 
+export interface AIAuditRecord {
+  id: string;
+  userId: string;
+  capability: AICapability;
+  provider: string;
+  model: string;
+  latencyMs: number;
+  creditCost: number;
+  status: 'SUCCESS' | 'FAILED';
+  error?: string;
+  fallbackUsed?: boolean;
+  timestamp: string;
+}
+
 interface UserRateLimitState {
   tokens: number;
   lastRefill: number;
@@ -45,6 +59,7 @@ export class AIGatewayService {
   private adapters = new Map<string, IAIProviderAdapter>();
   private defaultProviderId: string;
   private userRateLimits = new Map<string, UserRateLimitState>();
+  private auditTrail: AIAuditRecord[] = [];
 
   // Rate limit config: 60 requests per minute capacity, refilled at 1 token/sec
   private readonly rateLimitMax = 60;
@@ -76,6 +91,37 @@ export class AIGatewayService {
       capabilities: a.supportedCapabilities,
       defaultModels: a.defaultModels,
     }));
+  }
+
+  // --------------------------------------------------------------------------
+  // AUDIT TRAIL LOGGING & COMPLIANCE
+  // --------------------------------------------------------------------------
+  recordAudit(entry: Omit<AIAuditRecord, 'id' | 'timestamp'>): AIAuditRecord {
+    const record: AIAuditRecord = {
+      ...entry,
+      id: 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+      timestamp: new Date().toISOString(),
+    };
+    this.auditTrail.unshift(record);
+    if (this.auditTrail.length > 500) {
+      this.auditTrail.length = 500;
+    }
+    return record;
+  }
+
+  getAuditTrail(filter?: { userId?: string; capability?: string; limit?: number }): AIAuditRecord[] {
+    let list = this.auditTrail;
+    if (filter?.userId) {
+      list = list.filter((a) => a.userId === filter.userId);
+    }
+    if (filter?.capability) {
+      list = list.filter((a) => a.capability === filter.capability);
+    }
+    return list.slice(0, filter?.limit || 100);
+  }
+
+  clearAuditTrail(): void {
+    this.auditTrail = [];
   }
 
   // --------------------------------------------------------------------------
@@ -181,6 +227,16 @@ export class AIGatewayService {
       const model = req.model || primaryAdapter.defaultModels[capability] || 'default';
       const usage = computeUsage(result, latencyMs);
 
+      this.recordAudit({
+        userId,
+        capability,
+        provider: primaryProviderId,
+        model,
+        latencyMs,
+        creditCost,
+        status: 'SUCCESS',
+      });
+
       return {
         ...result,
         gateway: {
@@ -210,6 +266,17 @@ export class AIGatewayService {
             const model = req.model || fallbackAdapter.defaultModels[capability] || 'default';
             const usage = computeUsage(fallbackResult, latencyMs);
 
+            this.recordAudit({
+              userId,
+              capability,
+              provider: fallbackProviderId,
+              model,
+              latencyMs,
+              creditCost,
+              status: 'SUCCESS',
+              fallbackUsed: true,
+            });
+
             return {
               ...fallbackResult,
               gateway: {
@@ -229,6 +296,17 @@ export class AIGatewayService {
           }
         }
       }
+
+      this.recordAudit({
+        userId,
+        capability,
+        provider: primaryProviderId,
+        model: req.model || 'default',
+        latencyMs: Date.now() - startTime,
+        creditCost: 0,
+        status: 'FAILED',
+        error: (primaryError as Error).message,
+      });
 
       // If all providers failed, refund user credits
       if (creditCost > 0 && !req.skipCreditDeduction) {

@@ -74,8 +74,10 @@ export interface TranscriptionDocument {
   mediaUrl: string;
   mediaAssetId?: string | null;
   language: string;
+  targetLanguage?: string;
   durationSeconds: number;
   transcript: string;
+  translatedTranscript?: string;
   words: WordTiming[];
   speakers: SpeakerInfo[];
   segments: CaptionSegment[];
@@ -91,6 +93,7 @@ export interface TranscribeMediaInput {
   mediaAssetId?: string;
   audioBase64?: string;
   language?: string;
+  targetLanguage?: string;
   speakerDiarization?: boolean;
   maxSpeakers?: number;
   wordsPerCaption?: number;

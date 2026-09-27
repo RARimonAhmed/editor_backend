@@ -160,6 +160,20 @@ export class TranscriptionService {
       input.captionStyle || 'dynamic'
     );
 
+    // 6b. Optional Translation
+    let translatedTranscript: string | undefined = undefined;
+    if (input.targetLanguage && input.targetLanguage !== (sttRes.language || input.language || 'en')) {
+      try {
+        const transRes = await aiGatewayService.generateText(userId, {
+          prompt: `Translate the following transcript into ${input.targetLanguage}:\n\n${sttRes.text.trim()}`,
+          skipCreditDeduction: true,
+        });
+        translatedTranscript = transRes.text.trim();
+      } catch (err) {
+        logger.warn({ err, targetLanguage: input.targetLanguage }, 'Failed to translate transcript');
+      }
+    }
+
     // 7. Assemble Complete Document
     const document: TranscriptionDocument = {
       id: docId,
@@ -167,8 +181,10 @@ export class TranscriptionService {
       mediaUrl: resolvedAudioUrl || 'inline://base64',
       mediaAssetId: input.mediaAssetId || null,
       language: sttRes.language || input.language || 'en',
+      targetLanguage: input.targetLanguage,
       durationSeconds: Number(sttRes.durationSeconds.toFixed(2)),
       transcript: sttRes.text.trim(),
+      translatedTranscript,
       words: normalizedWords,
       speakers: speakersList,
       segments: normalizedSegments,

@@ -105,6 +105,54 @@ export class AIGenerationController {
       },
     });
   }
+
+  async generateBroll(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const userId = (request as any).user?.userId || (request as any).user?.id || (request.headers['x-user-id'] as string) || 'anonymous';
+    const body = (request.body || {}) as any;
+    const job = await aiGenerationService.generateBroll(userId, body);
+    reply.status(202).send({
+      success: true,
+      data: {
+        jobId: job.id,
+        status: job.status,
+        type: job.type,
+        estimatedCostCredits: 15,
+        pollUrl: `/v1/ai/jobs/${job.id}`,
+      },
+    });
+  }
+
+  async extendVideo(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const userId = (request as any).user?.userId || (request as any).user?.id || (request.headers['x-user-id'] as string) || 'anonymous';
+    const body = (request.body || {}) as any;
+    const job = await aiGenerationService.extendVideo(userId, body);
+    reply.status(202).send({
+      success: true,
+      data: {
+        jobId: job.id,
+        status: job.status,
+        type: job.type,
+        estimatedCostCredits: 10,
+        pollUrl: `/v1/ai/jobs/${job.id}`,
+      },
+    });
+  }
+
+  async extendAudio(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const userId = (request as any).user?.userId || (request as any).user?.id || (request.headers['x-user-id'] as string) || 'anonymous';
+    const body = (request.body || {}) as any;
+    const job = await aiGenerationService.extendAudio(userId, body);
+    reply.status(202).send({
+      success: true,
+      data: {
+        jobId: job.id,
+        status: job.status,
+        type: job.type,
+        estimatedCostCredits: 5,
+        pollUrl: `/v1/ai/jobs/${job.id}`,
+      },
+    });
+  }
 }
 
 export const aiGenerationController = new AIGenerationController();

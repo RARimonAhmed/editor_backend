@@ -31,6 +31,7 @@ import { mediaRoutes } from './modules/media/media.routes.js';
 import { creditsRoutes } from './modules/credits/credits.routes.js';
 import { billingRoutes } from './modules/credits/billing.routes.js';
 import { subscriptionsRoutes } from './modules/subscriptions/subscriptions.routes.js';
+import { mediaIntelligenceController } from './modules/media/intelligence/media-intelligence.controller.js';
 
 import { aiRoutes } from './modules/ai/ai.routes.js';
 import { jobsRoutes } from './modules/jobs/jobs.routes.js';
@@ -340,6 +341,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     v1.get('/me', { preHandler: [authenticate] }, authController.getMe.bind(authController));
     v1.patch('/me', { preHandler: [authenticate] }, authController.updateMe.bind(authController));
     v1.delete('/me', { preHandler: [authenticate] }, authController.deleteMe.bind(authController));
+
+    // Direct /search/media semantic search endpoint
+    v1.get('/search/media', { preHandler: [authenticate] }, mediaIntelligenceController.searchMediaGet.bind(mediaIntelligenceController));
   };
 
   // Register on both /api/v1 and /v1 for complete client compatibility

@@ -68,6 +68,36 @@ export interface GenerateScriptInput {
   provider?: string;
 }
 
+export interface ExtendVideoInput {
+  mediaAssetId?: string;
+  videoUrl?: string;
+  extendSeconds: number;
+  prompt?: string;
+  projectId?: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface ExtendAudioInput {
+  mediaAssetId?: string;
+  audioUrl?: string;
+  extendSeconds: number;
+  prompt?: string;
+  projectId?: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface GenerateBrollInput {
+  prompt: string;
+  durationSeconds?: number;
+  resolution?: '720p' | '1080p' | '4k';
+  aspectRatio?: '16:9' | '9:16' | '1:1';
+  projectId?: string;
+  model?: string;
+  provider?: string;
+}
+
 export interface GenerationJobOutput {
   mediaAssetId?: string;
   mediaMetadataId?: string;

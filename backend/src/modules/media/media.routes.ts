@@ -144,6 +144,30 @@ export async function mediaRoutes(fastify: FastifyInstance) {
     mediaIntelligenceController.search.bind(mediaIntelligenceController)
   );
 
+  fastify.get(
+    '/search',
+    {
+      schema: {
+        description: 'Multi-modal semantic search via GET query string (?q=...) returning real assets and timestamps',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    mediaIntelligenceController.searchMediaGet.bind(mediaIntelligenceController)
+  );
+
+  fastify.get(
+    '/search/media',
+    {
+      schema: {
+        description: 'Multi-modal semantic search via GET query string (?q=...) returning real assets and timestamps',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    mediaIntelligenceController.searchMediaGet.bind(mediaIntelligenceController)
+  );
+
   // 7. Get Media by ID
   fastify.get(
     '/:id',
@@ -379,6 +403,45 @@ export async function mediaRoutes(fastify: FastifyInstance) {
       },
     },
     mediaIntelligenceController.getIntelligence.bind(mediaIntelligenceController)
+  );
+
+  // 19b. Analysis Aliases
+  fastify.get(
+    '/:id/analysis',
+    {
+      schema: {
+        description: 'Retrieve AI media analysis document for a media asset',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    mediaIntelligenceController.getAnalysis.bind(mediaIntelligenceController)
+  );
+
+  fastify.post(
+    '/:id/analysis',
+    {
+      schema: {
+        description: 'Submit an asynchronous AI media analysis pipeline job',
+        tags: ['Media Intelligence'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+      },
+    },
+    mediaIntelligenceController.startAnalysisJob.bind(mediaIntelligenceController)
   );
 
   // 20. List Media Assets

@@ -26,6 +26,32 @@ export async function aiRoutes(fastify: FastifyInstance) {
     aiController.listProviders.bind(aiController)
   );
 
+  // 0b. AI Gateway Audit Trail
+  fastify.get(
+    '/audit',
+    {
+      schema: {
+        description: 'Retrieve AI Gateway invocation audit trail for compliance and cost tracking',
+        tags: ['AI Gateway'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    async (request, reply) => {
+      const q = (request.query || {}) as any;
+      const userId = (request.user as any)?.userId || q.userId;
+      const logs = (await import('./ai-gateway.service.js')).aiGatewayService.getAuditTrail({
+        userId,
+        capability: q.capability,
+        limit: q.limit ? Number(q.limit) : 50,
+      });
+      return reply.status(200).send({
+        success: true,
+        count: logs.length,
+        data: logs,
+      });
+    }
+  );
+
   // 1. Text Generation
   fastify.post(
     '/text',
@@ -432,6 +458,30 @@ export async function aiRoutes(fastify: FastifyInstance) {
     editingAnalysisController.getAnalysis.bind(editingAnalysisController)
   );
 
+  fastify.post(
+    '/editing-analysis/smart-plan',
+    {
+      schema: {
+        description: 'Generate structured EditorCommandPlan for smart edit mode (silence, filler, scene, highlight, reframe, short, beat, crop)',
+        tags: ['AI Editing Assistant'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editingAnalysisController.generateSmartEditPlan.bind(editingAnalysisController)
+  );
+
+  fastify.post(
+    '/smart-edit',
+    {
+      schema: {
+        description: 'Generate structured EditorCommandPlan for smart edit mode (alias)',
+        tags: ['AI Editing Assistant'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    editingAnalysisController.generateSmartEditPlan.bind(editingAnalysisController)
+  );
+
   // --------------------------------------------------------------------------
   // AI SHORT-VIDEO ORCHESTRATION & EDITOR COMMAND PLANS
   // --------------------------------------------------------------------------
@@ -556,6 +606,42 @@ export async function aiRoutes(fastify: FastifyInstance) {
       },
     },
     aiGenerationController.generateScript.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/broll',
+    {
+      schema: {
+        description: 'Generate synthetic B-roll visual clips from text prompt via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.generateBroll.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/video-extend',
+    {
+      schema: {
+        description: 'Extend existing video footage duration seamlessly via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.extendVideo.bind(aiGenerationController)
+  );
+
+  fastify.post(
+    '/generate/audio-extend',
+    {
+      schema: {
+        description: 'Extend existing music or audio track duration seamlessly via asynchronous job',
+        tags: ['AI Generation'],
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    aiGenerationController.extendAudio.bind(aiGenerationController)
   );
 
   // --------------------------------------------------------------------------

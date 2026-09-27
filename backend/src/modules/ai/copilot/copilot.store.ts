@@ -9,7 +9,7 @@ export class CopilotStore {
   /**
    * Persist generated command plan into PostgreSQL ai_jobs and ai_outputs tables
    */
-  async savePlan(plan: EditorCommandPlan, userId: string, jobId: string): Promise<void> {
+  async savePlan(plan: EditorCommandPlan, userId: string, jobId: string = uuidv4()): Promise<void> {
     mockCopilotPlans.set(plan.planId, plan);
 
     try {

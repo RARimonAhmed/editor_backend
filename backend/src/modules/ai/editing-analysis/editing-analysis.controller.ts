@@ -71,6 +71,28 @@ export class EditingAnalysisController {
     const result = await editingAnalysisService.getAnalysis(parse.data.id, userId);
     return reply.status(200).send(createSuccessResponse(result));
   }
+
+  /**
+   * POST /v1/ai/editing-analysis/smart-plan
+   * Generates a validated EditorCommandPlan for any of the 8 smart edit modes
+   */
+  async generateSmartEditPlan(request: FastifyRequest, reply: FastifyReply) {
+    const body = (request.body || {}) as any;
+    if (!body || !body.projectId || !body.mode) {
+      throw new ValidationError('projectId and mode are required');
+    }
+
+    const userId = request.user!.userId;
+    const plan = await editingAnalysisService.generateSmartEditPlan(userId, {
+      projectId: body.projectId,
+      projectVersion: body.projectVersion,
+      mode: body.mode,
+      mediaAssetId: body.mediaAssetId,
+      options: body.options,
+    });
+
+    return reply.status(200).send(createSuccessResponse(plan));
+  }
 }
 
 export const editingAnalysisController = new EditingAnalysisController();

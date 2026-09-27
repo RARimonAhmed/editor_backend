@@ -7,6 +7,9 @@ import {
   GenerateSfxInput,
   GenerateVoiceInput,
   GenerateScriptInput,
+  ExtendVideoInput,
+  ExtendAudioInput,
+  GenerateBrollInput,
 } from './ai-generation.types.js';
 import { logger } from '../../../core/logger.js';
 
@@ -117,6 +120,60 @@ export class AIGenerationService {
         style: input.style,
         targetDurationSeconds: input.targetDurationSeconds,
         genre: input.genre,
+        projectId: input.projectId,
+      },
+    });
+    return job;
+  }
+
+  async generateBroll(userId: string, input: GenerateBrollInput): Promise<AIJobRecord> {
+    logger.info({ userId, prompt: input.prompt }, 'Submitting AI B-roll generation job');
+    const { job } = await aiJobService.createJob(userId, {
+      type: 'broll_generation',
+      projectId: input.projectId,
+      provider: input.provider,
+      model: input.model,
+      input: {
+        prompt: input.prompt,
+        durationSeconds: input.durationSeconds || 5,
+        resolution: input.resolution || '1080p',
+        aspectRatio: input.aspectRatio || '16:9',
+        projectId: input.projectId,
+      },
+    });
+    return job;
+  }
+
+  async extendVideo(userId: string, input: ExtendVideoInput): Promise<AIJobRecord> {
+    logger.info({ userId, mediaAssetId: input.mediaAssetId, extendSeconds: input.extendSeconds }, 'Submitting AI video extend job');
+    const { job } = await aiJobService.createJob(userId, {
+      type: 'video_extend',
+      projectId: input.projectId,
+      provider: input.provider,
+      model: input.model,
+      input: {
+        mediaAssetId: input.mediaAssetId,
+        videoUrl: input.videoUrl,
+        extendSeconds: input.extendSeconds || 5,
+        prompt: input.prompt || 'Seamlessly extend video scene continuity',
+        projectId: input.projectId,
+      },
+    });
+    return job;
+  }
+
+  async extendAudio(userId: string, input: ExtendAudioInput): Promise<AIJobRecord> {
+    logger.info({ userId, mediaAssetId: input.mediaAssetId, extendSeconds: input.extendSeconds }, 'Submitting AI audio extend job');
+    const { job } = await aiJobService.createJob(userId, {
+      type: 'audio_extend',
+      projectId: input.projectId,
+      provider: input.provider,
+      model: input.model,
+      input: {
+        mediaAssetId: input.mediaAssetId,
+        audioUrl: input.audioUrl,
+        extendSeconds: input.extendSeconds || 10,
+        prompt: input.prompt || 'Harmonically extend music or ambient track',
         projectId: input.projectId,
       },
     });

@@ -64,6 +64,9 @@ export interface AITextRequest {
   maxTokens?: number;
   stopSequences?: string[];
   timeoutMs?: number;
+  skipCreditDeduction?: boolean;
+  requestId?: string;
+  jobId?: string;
 }
 
 export interface AITextResponse {
