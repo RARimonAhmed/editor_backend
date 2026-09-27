@@ -87,6 +87,18 @@ export const ALLOWED_STORAGE_MIME_TYPES = new Set([
   'text/plain',
   'text/vtt',
   'application/x-subrip',
+  // Fonts & Creative Assets
+  'font/woff2',
+  'font/woff',
+  'font/ttf',
+  'font/otf',
+  'application/font-woff',
+  'application/x-font-ttf',
+  'application/x-font-truetype',
+  'application/x-font-opentype',
+  // LUTs & Color Grading
+  'application/x-cube',
+  'text/x-cube',
 ]);
 
 export interface IStorageService {

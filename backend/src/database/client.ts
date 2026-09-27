@@ -47,6 +47,12 @@ export class MemoryDatabaseClient implements IDatabaseClient {
     jobs: [],
     ai_jobs: [],
     render_jobs: [],
+    creative_assets: [],
+    templates: [],
+    template_favorites: [],
+    effect_presets: [],
+    brand_kits: [],
+    social_export_presets: [],
     _schema_migrations: [],
   };
 
@@ -182,6 +188,71 @@ export class MemoryDatabaseClient implements IDatabaseClient {
           if (lower.includes('attempts = attempts + 1')) {
             found.attempts = (found.attempts || 0) + 1;
           }
+        }
+        return {
+          rows: found ? ([found] as unknown as R[]) : [],
+          command: 'UPDATE',
+          rowCount: found ? 1 : 0,
+          oid: 0,
+          fields: [],
+        };
+      }
+    }
+
+    // Handle brand_kits queries in memory
+    if (lower.includes('brand_kits')) {
+      if (lower.startsWith('insert into brand_kits')) {
+        const row: any = {
+          id: params[0],
+          user_id: params[1],
+          name: params[2],
+          logo: params[3],
+          colors: params[4],
+          fonts: params[5],
+          intro: params[6],
+          outro: params[7],
+          watermark: params[8],
+          cta: params[9],
+          social_handles: params[10],
+          created_at: params[11] || new Date().toISOString(),
+          updated_at: params[12] || new Date().toISOString(),
+        };
+        this.tables.brand_kits.push(row);
+        return {
+          rows: [row as unknown as R],
+          command: 'INSERT',
+          rowCount: 1,
+          oid: 0,
+          fields: [],
+        };
+      }
+
+      if (lower.startsWith('select') && lower.includes('from brand_kits')) {
+        const userId = params[0];
+        const found = this.tables.brand_kits.find((b) => b.user_id === userId);
+        return {
+          rows: found ? ([found] as unknown as R[]) : [],
+          command: 'SELECT',
+          rowCount: found ? 1 : 0,
+          oid: 0,
+          fields: [],
+        };
+      }
+
+      if (lower.startsWith('update brand_kits')) {
+        const id = params[params.length - 1];
+        const found = this.tables.brand_kits.find((b) => b.id === id);
+        if (found) {
+          found.name = params[0];
+          found.logo = params[1];
+          found.colors = params[2];
+          found.fonts = params[3];
+          found.intro = params[4];
+          found.outro = params[5];
+          found.watermark = params[6];
+          found.cta = params[7];
+          found.social_handles = params[8];
+          found.updated_at = params[9];
         }
         return {
           rows: found ? ([found] as unknown as R[]) : [],

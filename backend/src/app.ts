@@ -42,6 +42,10 @@ import { aiJobWsRoutes } from './modules/ai/jobs/ai-job.ws.js';
 import { realtimeWsRoutes } from './modules/realtime/realtime.ws.js';
 import { realtimeRoutes } from './modules/realtime/realtime.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
+import { assetRoutes } from './modules/assets/asset.routes.js';
+import { templateRoutes } from './modules/templates/template.routes.js';
+import { presetRoutes } from './modules/presets/preset.routes.js';
+import { brandRoutes } from './modules/brand/brand.routes.js';
 import { metricsService } from './core/metrics.service.js';
 import { registerQueueProcessors } from './services/queue/processors.js';
 
@@ -327,6 +331,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     await v1.register(webhooksRoutes, { prefix: '/webhooks' });
     await v1.register(adminRoutes, { prefix: '/admin' });
     await v1.register(realtimeRoutes);
+    await v1.register(assetRoutes, { prefix: '/assets' });
+    await v1.register(templateRoutes, { prefix: '/templates' });
+    await v1.register(presetRoutes, { prefix: '/presets' });
+    await v1.register(brandRoutes);
 
     // Direct /me endpoints
     v1.get('/me', { preHandler: [authenticate] }, authController.getMe.bind(authController));
@@ -342,6 +350,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiRoutes, { prefix: '/ai' });
   await app.register(projectsRoutes, { prefix: '/projects' });
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(assetRoutes, { prefix: '/assets' });
+  await app.register(templateRoutes, { prefix: '/templates' });
+  await app.register(presetRoutes, { prefix: '/presets' });
+  await app.register(brandRoutes);
 
   // Serve Admin Dashboard Web Application if built
   const possibleAdminPaths = [
